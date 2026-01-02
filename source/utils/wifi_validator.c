@@ -2183,8 +2183,7 @@ int validate_radio_vap(const cJSON *wifi, wifi_radio_operationParam_t *wifi_radi
 
         //RadarDetected
         validate_param_string(wifi, "RadarDetected", param);
-        strncpy(wifi_radio_info->radarDetected, param->valuestring, sizeof(wifi_radio_info->radarDetected) - 1);
-        wifi_radio_info->radarDetected[sizeof(wifi_radio_info->radarDetected) - 1] = '\0';
+        snprintf(wifi_radio_info->radarDetected, sizeof(wifi_radio_info->radarDetected), "%s", param->valuestring);
 
         // Amsdu_Tid
         validate_param_string(wifi, "Amsdu_Tid", param);

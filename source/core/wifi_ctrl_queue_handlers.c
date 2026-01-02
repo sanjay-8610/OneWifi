@@ -2130,10 +2130,10 @@ void process_wpa3_rfc(bool type)
     for(UINT rIdx = 0; rIdx < getNumberRadios(); rIdx++) {
         apIndex = getPrivateApFromRadioIndex(rIdx);
         vapInfo =  get_wifidb_vap_parameters(apIndex);
-	if (vapInfo == NULL) {
+        if (vapInfo == NULL) {
             wifi_util_error_print(WIFI_CTRL, "%s:%d Failed to get vap info for index %d\n",
                 __func__, __LINE__, apIndex);
-	    continue;
+            continue;
         }
         radio_params = (wifi_radio_operationParam_t *)get_wifidb_radio_map(rIdx);
 
@@ -3433,7 +3433,7 @@ void process_rsn_override_rfc(bool type)
     wifi_vap_info_t *vapInfo = NULL;
     char update_status[128], old_sec_mode[32], new_sec_mode[32];
 
-    tgt_vap_map = (wifi_vap_info_map_t *)calloc(1, sizeof(wifi_vap_info_map_t));
+    tgt_vap_map = (wifi_vap_info_map_t *)malloc(1, sizeof(wifi_vap_info_map_t));
     if (tgt_vap_map == NULL) {
         wifi_util_error_print(WIFI_CTRL, "%s:%d Failed to allocate memory\n", __func__, __LINE__);
         return;
@@ -3467,8 +3467,7 @@ void process_rsn_override_rfc(bool type)
         memset(new_sec_mode, 0, sizeof(new_sec_mode));
         ret = convert_sec_mode_enable_int_str(vapInfo->u.bss_info.security.mode, old_sec_mode);
         if(ret != RETURN_OK) {
-            wifi_util_error_print(WIFI_CTRL, "%s:%d: Error converting security mode to string old_mode:%s new_mode:%s\n",
-                 __func__, __LINE__, old_sec_mode, new_sec_mode);
+            wifi_util_error_print(WIFI_CTRL, "%s:%d: Error converting security mode to string\n", __func__, __LINE__);
         }
 
         if(type) {

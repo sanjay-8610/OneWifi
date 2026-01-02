@@ -823,15 +823,14 @@ void ext_try_connecting(wifi_service_node_t *node)
     } else {
         wifi_util_error_print(WIFI_SERVICES, "%s:%d: assert - conn_state : %s\n", __func__, __LINE__,
             ext_conn_state_to_str(ext->conn_state));
-        // should not come here in any states other than connection_state_connection_in_progress
-        assert((ext->conn_state != connection_state_connection_in_progress) &&
-        (ext->conn_state != connection_state_connection_to_lcb_in_progress));
+        // should not come here in any states other than three states in_progress
+        assert(0);
     }
 
     if (found_at_least_one_candidate == true) {
         if (candidate != NULL) {
             if (convert_freq_band_to_radio_index(candidate->radio_freq_band, (int *)&radio_index) == RETURN_ERR) {
-                wifi_util_dbg_print(WIFI_SERVICES, "%s:%d error converting freq to band for radio %d \n", __func__, __LINE__, radio_index);
+                wifi_util_dbg_print(WIFI_SERVICES, "%s:%d error converting freq to band for radio %d\n", __func__, __LINE__, radio_index);
             }
         } else {
             wifi_util_error_print(WIFI_SERVICES, "%s:%d: candidate param NULL\n", __func__, __LINE__);
