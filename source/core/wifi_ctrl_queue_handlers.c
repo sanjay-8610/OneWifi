@@ -2129,7 +2129,7 @@ void process_wpa3_rfc(bool type)
 
     tgt_vap_map = (wifi_vap_info_map_t *)malloc(sizeof(wifi_vap_info_map_t));
     if (tgt_vap_map == NULL) {
-        wifi_util_error_print(WIFI_CTRL, "%s:%d failed to allocate memory for tgt_vap_map for apIndex%u\n", __func__, __LINE__, apIndex);
+        wifi_util_error_print(WIFI_CTRL, "%s:%d failed to allocate memory\n", __func__, __LINE__);
         return;
     }
 
@@ -2198,10 +2198,7 @@ void process_wpa3_rfc(bool type)
         }
     }
 
-    if (tgt_vap_map != NULL) {
-        free(tgt_vap_map);
-        tgt_vap_map = NULL;
-    }
+    free(tgt_vap_map);
 }
 
 void process_dfs_rfc(bool type)
@@ -3445,7 +3442,7 @@ void process_rsn_override_rfc(bool type)
 
     tgt_vap_map = (wifi_vap_info_map_t *)malloc(sizeof(wifi_vap_info_map_t));
     if (tgt_vap_map == NULL) {
-        wifi_util_error_print(WIFI_CTRL, "%s:%d failed to allocate memory for tgt_vap_map for apIndex %u\n", __func__, __LINE__, apIndex);
+        wifi_util_error_print(WIFI_CTRL, "%s:%d failed to allocate memory\n", __func__, __LINE__);
         return;
     }
 
@@ -3527,10 +3524,7 @@ void process_rsn_override_rfc(bool type)
         }
     }
 
-    if (tgt_vap_map != NULL) {
-        free(tgt_vap_map);
-        tgt_vap_map = NULL;
-    }
+    free(tgt_vap_map);
 }
 
 void handle_command_event(wifi_ctrl_t *ctrl, void *data, unsigned int len,
