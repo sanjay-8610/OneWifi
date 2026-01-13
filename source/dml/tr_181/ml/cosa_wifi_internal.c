@@ -309,7 +309,7 @@ void CosaDmlWiFiGetFromPSM(void)
 
     radio_cfg = (wifi_radio_operationParam_t *)malloc(sizeof(wifi_radio_operationParam_t));
     if (radio_cfg == NULL) {
-        wifi_util_error_print(WIFI_PSM, "%s:%d failed to allocate memory for radio_cfg\n", __func__, __LINE__);
+        wifi_util_error_print(WIFI_PSM, "%s:%d failed to allocate memory\n", __func__, __LINE__);
         return;
     }
 
@@ -320,12 +320,18 @@ void CosaDmlWiFiGetFromPSM(void)
         psm_radio_param = get_radio_psm_obj((instance_number - 1));
         if (psm_radio_param == NULL) {
             wifi_util_error_print(WIFI_PSM,"%s:%d psm radio param NULL radio_index:%d\r\n", __func__, __LINE__, (instance_number - 1));
-            goto cleanup;
+            if (radio_cfg != NULL) {
+	        free(radio_cfg);
+                return;
+            }
         }
         psm_radio_feat_param = get_radio_feat_psm_obj(instance_number - 1);
         if (psm_radio_feat_param == NULL) {
             wifi_util_error_print(WIFI_PSM,"%s:%d psm radio feature param NULL radio_index:%d\r\n", __func__, __LINE__, (instance_number - 1));
-            goto cleanup;
+            if (radio_cfg != NULL) {
+                free(radio_cfg);
+                return;
+            }
         }
 #if defined(FEATURE_OFF_CHANNEL_SCAN_5G)
         if (is_radio_band_5G(radio_cfg->band)) {
@@ -559,12 +565,6 @@ void CosaDmlWiFiGetFromPSM(void)
             wifi_util_dbg_print(WIFI_PSM,"%s:%d: Set default value:%d chanUtilSelfHealEnable: %d\r\n", __func__, __LINE__, radio_cfg->chanUtilSelfHealEnable, psm_radio_param->chan_util_selfheal_enable);
         }
        }
-
-cleanup:
-    if (radio_cfg != NULL) {
-        free(radio_cfg);
-        radio_cfg = NULL;
-    }
 
        for (unsigned int vap_array_index = 0; vap_array_index < getTotalNumberVAPs(); vap_array_index++) {
             unsigned int instance_number;
