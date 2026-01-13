@@ -2114,7 +2114,7 @@ void process_wpa3_rfc(bool type)
 {
     wifi_util_dbg_print(WIFI_DB,"WIFI Enter RFC Func %s: %d : bool %d\n",__FUNCTION__,__LINE__,type);
     wifi_rfc_dml_parameters_t *rfc_param = (wifi_rfc_dml_parameters_t *) get_ctrl_rfc_parameters();
-    wifi_vap_info_map_t tgt_vap_map;
+    wifi_vap_info_map_t *tgt_vap_map = NULL;
     wifi_vap_info_t *vapInfo = NULL;
     wifi_radio_operationParam_t *radio_params = NULL;
     vap_svc_t *svc;
@@ -2126,6 +2126,12 @@ void process_wpa3_rfc(bool type)
     rfc_param->wpa3_rfc = type;
     get_wifidb_obj()->desc.update_rfc_config_fn(0, rfc_param);
     ctrl->webconfig_state |= ctrl_webconfig_state_vap_private_cfg_rsp_pending;
+
+    tgt_vap_map = (wifi_vap_info_map_t *)malloc(sizeof(wifi_vap_info_map_t));
+    if (tgt_vap_map == NULL) {
+        wifi_util_error_print(WIFI_CTRL, "%s:%d failed to allocate memory for tgt_vap_map for apIndex%u\n", __func__, __LINE__, apIndex);
+        return;
+    }
 
     for(UINT rIdx = 0; rIdx < getNumberRadios(); rIdx++) {
         apIndex = getPrivateApFromRadioIndex(rIdx);
@@ -2171,16 +2177,16 @@ void process_wpa3_rfc(bool type)
             }
         }
 
-        memset(&tgt_vap_map, 0, sizeof(wifi_vap_info_map_t));
-        tgt_vap_map.num_vaps = 1;
-        memcpy(&tgt_vap_map.vap_array[0], vapInfo, sizeof(wifi_vap_info_t));
+        memset(tgt_vap_map, 0, sizeof(wifi_vap_info_map_t));
+        tgt_vap_map->num_vaps = 1;
+        memcpy(&tgt_vap_map->vap_array[0], vapInfo, sizeof(wifi_vap_info_t));
         rdk_vap_info = get_wifidb_rdk_vap_info(apIndex);
         if (rdk_vap_info == NULL) {
             wifi_util_error_print(WIFI_CTRL, "%s:%d Failed to get rdk vap info for index %d\n",
                 __func__, __LINE__, apIndex);
             continue;
         }
-        ret = svc->update_fn(svc, rIdx, &tgt_vap_map, rdk_vap_info);
+        ret = svc->update_fn(svc, rIdx, tgt_vap_map, rdk_vap_info);
         memset(update_status, 0, sizeof(update_status));
         snprintf(update_status, sizeof(update_status), "%s %s", vapInfo->vap_name, (ret == RETURN_OK)?"success":"fail");
         apps_mgr_analytics_event(&ctrl->apps_mgr, wifi_event_type_webconfig, wifi_event_webconfig_hal_result, update_status);
@@ -2190,6 +2196,11 @@ void process_wpa3_rfc(bool type)
         } else {
             wifi_util_dbg_print(WIFI_DB,"%s:%d: Updating security mode for apIndex %d secmode %d \n",__func__, __LINE__,apIndex,vapInfo->u.bss_info.security.mode);
         }
+    }
+
+    if (tgt_vap_map != NULL) {
+        free(tgt_vap_map);
+        tgt_vap_map = NULL;
     }
 }
 
@@ -3420,7 +3431,7 @@ void process_rsn_override_rfc(bool type)
 {
     wifi_rfc_dml_parameters_t *rfc_param = (wifi_rfc_dml_parameters_t *) get_ctrl_rfc_parameters();
     vap_svc_t *svc;
-    wifi_vap_info_map_t tgt_vap_map;
+    wifi_vap_info_map_t *tgt_vap_map = NULL;
     wifi_ctrl_t *ctrl = (wifi_ctrl_t *)get_wifictrl_obj();
     wifi_radio_operationParam_t *radio_params = NULL;
     UINT apIndex = 0, ret;
@@ -3431,6 +3442,12 @@ void process_rsn_override_rfc(bool type)
     rfc_param->wpa3_compatibility_enable = type;
     get_wifidb_obj()->desc.update_rfc_config_fn(0, rfc_param);
     ctrl->webconfig_state |= ctrl_webconfig_state_vap_private_cfg_rsp_pending;
+
+    tgt_vap_map = (wifi_vap_info_map_t *)malloc(sizeof(wifi_vap_info_map_t));
+    if (tgt_vap_map == NULL) {
+        wifi_util_error_print(WIFI_CTRL, "%s:%d failed to allocate memory for tgt_vap_map for apIndex %u\n", __func__, __LINE__, apIndex);
+        return;
+    }
 
     for(UINT rIdx = 0; rIdx < getNumberRadios(); rIdx++) {
         apIndex = getPrivateApFromRadioIndex(rIdx);
@@ -3489,16 +3506,16 @@ void process_rsn_override_rfc(bool type)
             notify_wifi_sec_mode_enabled(ctrl, apIndex, old_sec_mode, new_sec_mode);
         }
 
-        memset(&tgt_vap_map, 0, sizeof(wifi_vap_info_map_t));
-        tgt_vap_map.num_vaps = 1;
-        memcpy(&tgt_vap_map.vap_array[0], vapInfo, sizeof(wifi_vap_info_t));
+        memset(tgt_vap_map, 0, sizeof(wifi_vap_info_map_t));
+        tgt_vap_map->num_vaps = 1;
+        memcpy(&tgt_vap_map->vap_array[0], vapInfo, sizeof(wifi_vap_info_t));
         rdk_vap_info = get_wifidb_rdk_vap_info(apIndex);
         if (rdk_vap_info == NULL) {
             wifi_util_error_print(WIFI_CTRL, "%s:%d Failed to get rdk vap info for index %d\n",
                 __func__, __LINE__, apIndex);
             continue;
         }
-        ret = svc->update_fn(svc, rIdx, &tgt_vap_map, rdk_vap_info);
+        ret = svc->update_fn(svc, rIdx, tgt_vap_map, rdk_vap_info);
         memset(update_status, 0, sizeof(update_status));
         snprintf(update_status, sizeof(update_status), "%s %s", vapInfo->vap_name, (ret == RETURN_OK)?"success":"fail");
         apps_mgr_analytics_event(&ctrl->apps_mgr, wifi_event_type_webconfig, wifi_event_webconfig_hal_result, update_status);
@@ -3508,6 +3525,11 @@ void process_rsn_override_rfc(bool type)
         } else {
             wifi_util_dbg_print(WIFI_CTRL,"%s:%d: Updating security mode for apIndex %d secmode %d \n",__func__, __LINE__,apIndex,vapInfo->u.bss_info.security.mode);
         }
+    }
+
+    if (tgt_vap_map != NULL) {
+        free(tgt_vap_map);
+        tgt_vap_map = NULL;
     }
 }
 
