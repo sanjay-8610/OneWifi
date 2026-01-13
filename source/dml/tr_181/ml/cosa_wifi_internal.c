@@ -298,7 +298,7 @@ void CosaDmlWiFiGetFromPSM(void)
     wifi_vap_psm_param_t *psm_vap_param;
     wifi_global_psm_param_t *psm_global_param;
     hash_map_t *psm_mac_map;
-    wifi_radio_operationParam_t *radio_cfg = NULL;
+    wifi_radio_operationParam_t radio_cfg;
     wifi_radio_feature_param_t radio_feat_cfg;
     wifi_vap_info_t vap_config;
     wifi_front_haul_bss_t *bss_cfg;
@@ -320,18 +320,14 @@ void CosaDmlWiFiGetFromPSM(void)
         psm_radio_param = get_radio_psm_obj((instance_number - 1));
         if (psm_radio_param == NULL) {
             wifi_util_error_print(WIFI_PSM,"%s:%d psm radio param NULL radio_index:%d\r\n", __func__, __LINE__, (instance_number - 1));
-            if (radio_cfg != NULL) {
-	        free(radio_cfg);
-                return;
-            }
+            free(radio_cfg);
+            return;
         }
         psm_radio_feat_param = get_radio_feat_psm_obj(instance_number - 1);
         if (psm_radio_feat_param == NULL) {
             wifi_util_error_print(WIFI_PSM,"%s:%d psm radio feature param NULL radio_index:%d\r\n", __func__, __LINE__, (instance_number - 1));
-            if (radio_cfg != NULL) {
-                free(radio_cfg);
-                return;
-            }
+            free(radio_cfg);
+            return;
         }
 #if defined(FEATURE_OFF_CHANNEL_SCAN_5G)
         if (is_radio_band_5G(radio_cfg->band)) {
@@ -938,6 +934,7 @@ void CosaDmlWiFiGetFromPSM(void)
 
     strcpy(psm_global_param->wps_pin, global_cfg.wps_pin);
     wifi_util_dbg_print(WIFI_PSM,":%s:%d set default value for WpsPin: %d : %d\r\n", __func__, __LINE__, global_cfg.wps_pin, psm_global_param->wps_pin);
+    free(radio_cfg);
 }
 
 void CosaDmlWiFiGetExternalDataFromPSM(void)
