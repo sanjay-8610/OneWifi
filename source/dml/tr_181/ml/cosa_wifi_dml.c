@@ -412,17 +412,20 @@ WiFi_GetParamBoolValue
     if (AnscEqualString(ParamName, "Log_Upload", TRUE))
     {
         fp = popen("crontab -l | grep -c copy_wifi_logs.sh","r");
-        while((fp != NULL) && (fgets(path,sizeof(path) , fp) != NULL)) {
-            val = atoi(path);
-            if(val == 1) {
-                *pBool = TRUE;
+        if (fp != NULL)
+        {
+            while(fgets(path,sizeof(path) , fp) != NULL) {
+                val = atoi(path);
+                if(val == 1) {
+                    *pBool = TRUE;
+                }
+                else  {
+                    *pBool = FALSE;
+               }
+                wifi_util_dbg_print(WIFI_DMCLI,"%s:%d Log_upload got %s and val=%d\n", __FUNCTION__,__LINE__,path,val);
             }
-            else  {
-                *pBool = FALSE;
-            }
-            wifi_util_dbg_print(WIFI_DMCLI,"%s:%d Log_upload got %s and val=%d\n", __FUNCTION__,__LINE__,path,val);
+            pclose(fp);
         }
-        pclose(fp);
         return TRUE;
     }
 

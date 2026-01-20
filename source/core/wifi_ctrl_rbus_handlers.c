@@ -1103,7 +1103,6 @@ bus_error_t get_assoc_clients_data(char *event_name, raw_data_t *p_data, bus_use
 
     data->u.decoded.num_radios = getNumberRadios();
     data->u.decoded.assoclist_notifier_type = assoclist_notifier_full;
-    webconfig_encode(&ctrl->webconfig, data, webconfig_subdoc_type_associated_clients);
     if (webconfig_encode(&ctrl->webconfig, data, webconfig_subdoc_type_associated_clients) != webconfig_error_none) {
         webconfig_data_free(data);
         free(data);
@@ -1160,7 +1159,6 @@ bus_error_t get_null_subdoc_data(char *name, raw_data_t *p_data, bus_user_data_t
         sizeof(wifi_hal_capability_t));
 
     data->u.decoded.num_radios = getNumberRadios();
-    webconfig_encode(&ctrl->webconfig, data, webconfig_subdoc_type_null);
     if (webconfig_encode(&ctrl->webconfig, data, webconfig_subdoc_type_null) != webconfig_error_none) {
         webconfig_data_free(data);
         free(data);
