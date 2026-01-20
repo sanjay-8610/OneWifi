@@ -412,8 +412,7 @@ WiFi_GetParamBoolValue
     if (AnscEqualString(ParamName, "Log_Upload", TRUE))
     {
         fp = popen("crontab -l | grep -c copy_wifi_logs.sh","r");
-        if (fp != NULL)
-        {
+        if (fp != NULL) {
             while(fgets(path,sizeof(path) , fp) != NULL) {
                 val = atoi(path);
                 if(val == 1) {
