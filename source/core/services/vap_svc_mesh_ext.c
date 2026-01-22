@@ -892,7 +892,7 @@ void ext_try_connecting(vap_svc_t *svc)
     } else {
         wifi_util_dbg_print(WIFI_CTRL, "%s:%d: assert - conn_state : %s\n", __func__, __LINE__,
             ext_conn_state_to_str(ext->conn_state));
-        // should not come here in any states other than three states in_progress
+        // should never reach here - function should only be called in the in_progress states
         assert(0);
     }
 
@@ -900,9 +900,11 @@ void ext_try_connecting(vap_svc_t *svc)
         if (candidate != NULL) {
             if (convert_freq_band_to_radio_index(candidate->radio_freq_band, (int *)&radio_index) == RETURN_ERR) {
                 wifi_util_info_print(WIFI_CTRL, "%s:%d unable to convert freq to band for radio %d\n", __func__, __LINE__, radio_index);
+                return;
             }
         } else {
             wifi_util_dbg_print(WIFI_CTRL, "%s:%d: candidate param NULL\n", __func__, __LINE__);
+            return;
         }
         vap_index = get_sta_vap_index_for_radio(svc->prop, radio_index);
 
