@@ -2388,8 +2388,8 @@ void process_wpa3_rfc(bool type)
         apIndex = getPrivateApFromRadioIndex(rIdx);
         vapInfo =  get_wifidb_vap_parameters(apIndex);
         if (vapInfo == NULL) {
-            wifi_util_error_print(WIFI_CTRL, "%s:%d Invalid VAP\n",
-            __func__, __LINE__);
+            wifi_util_error_print(WIFI_CTRL, "%s:%d Invalid VAP for rIndx %u apIndx %u\n",
+            __func__, __LINE__, rIdx, apIndex);
             continue;
         }
         radio_params = (wifi_radio_operationParam_t *)get_wifidb_radio_map(rIdx);
@@ -3713,8 +3713,8 @@ void process_rsn_override_rfc(bool type)
         apIndex = getPrivateApFromRadioIndex(rIdx);
         vapInfo =  get_wifidb_vap_parameters(apIndex);
         if (vapInfo == NULL) {
-            wifi_util_error_print(WIFI_CTRL, "%s:%d Failed to get vap info for index %d\n",
-                __func__, __LINE__, apIndex);
+            wifi_util_error_print(WIFI_CTRL, "%s:%d Invalid VAP for rIndx %u apIndx %u\n",
+                __func__, __LINE__, rIdx, apIndex);
             continue;
         }
         radio_params = (wifi_radio_operationParam_t *)get_wifidb_radio_map(rIdx);
@@ -3732,7 +3732,8 @@ void process_rsn_override_rfc(bool type)
         memset(new_sec_mode, 0, sizeof(new_sec_mode));
         ret = convert_sec_mode_enable_int_str(vapInfo->u.bss_info.security.mode, old_sec_mode);
         if(ret != RETURN_OK) {
-            wifi_util_error_print(WIFI_CTRL, "%s:%d: Error converting security mode to string\n", __func__, __LINE__);
+            wifi_util_error_print(WIFI_CTRL, "%s:%d: Error converting security mode to string for mode %d\n",
+                __func__, __LINE__, vapInfo->u.bss_info.security.mode);
         }
 
         if(type) {

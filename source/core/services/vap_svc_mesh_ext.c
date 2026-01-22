@@ -79,6 +79,7 @@ static int get_dwell_time()
 {
     FILE *fp = NULL;
     int dwell_time = DEFAULT_DWELL_TIME_MS;
+
     fp = fopen(DWELL_TIME_PATH, "r");
     if (fp == NULL) {
         return dwell_time;
@@ -890,7 +891,7 @@ void ext_try_connecting(vap_svc_t *svc)
             found_at_least_one_candidate = true;
         }
     } else {
-        wifi_util_dbg_print(WIFI_CTRL, "%s:%d: assert - conn_state : %s\n", __func__, __LINE__,
+        wifi_util_error_print(WIFI_CTRL, "%s:%d: assert - conn_state : %s\n", __func__, __LINE__,
             ext_conn_state_to_str(ext->conn_state));
         // should never reach here - function should only be called in the in_progress states
         assert(0);
@@ -899,7 +900,8 @@ void ext_try_connecting(vap_svc_t *svc)
     if (found_at_least_one_candidate == true) {
         if (candidate != NULL) {
             if (convert_freq_band_to_radio_index(candidate->radio_freq_band, (int *)&radio_index) == RETURN_ERR) {
-                wifi_util_info_print(WIFI_CTRL, "%s:%d unable to convert freq to band for radio %d\n", __func__, __LINE__, radio_index);
+                wifi_util_error_print(WIFI_CTRL, "%s:%d Invalid frequency band %d\n",
+			    __func__, __LINE__, candidate->radio_freq_band);
                 return;
             }
         } else {
@@ -908,7 +910,7 @@ void ext_try_connecting(vap_svc_t *svc)
         }
         vap_index = get_sta_vap_index_for_radio(svc->prop, radio_index);
 
-        wifi_util_info_print(WIFI_CTRL, "%s:%d connecting to ssid:%s bssid:%s rssi:%d frequency:%d on vap:%d radio:%d\n",
+        wifi_util_info_print(WIFI_CTRL,"%s:%d connecting to ssid:%s bssid:%s rssi:%d frequency:%d on vap:%d radio:%d\n",
                     __func__, __LINE__, candidate->external_ap.ssid,
                     to_mac_str(candidate->external_ap.bssid, bssid_str), candidate->external_ap.rssi,
                     candidate->external_ap.freq, vap_index, radio_index);
@@ -1315,7 +1317,7 @@ int process_ext_webconfig_set_data(vap_svc_t *svc, void *arg)
     }
 
     if (convert_freq_band_to_radio_index(candidate->radio_freq_band, (int *)&connected_radio_index) == RETURN_ERR) {
-        wifi_util_error_print(WIFI_CTRL, "%s:%d assert - error converting freq to band\n", __func__, __LINE__);
+        wifi_util_error_print(WIFI_CTRL, "%s:%d Invalid frequency band %d\n", __func__, __LINE__, candidate->radio_freq_band);
         return 0;
     }
     ext->go_to_channel = radio_oper_param->channel;
