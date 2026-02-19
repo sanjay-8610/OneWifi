@@ -764,10 +764,14 @@ int readRemoteIP(char *sIP, int size,char *sName)
 
                 // grab URL from string
                 urlPtr = strstr(buf, "=");
+                if (urlPtr == NULL) {
+                    fclose(fp1);
+                    return -1;
+                }
                 urlPtr++;
                 strncpy(sIP, urlPtr, size);
-              ret=0;
-              break;
+                ret=0;
+                break;
             }
         }
 
