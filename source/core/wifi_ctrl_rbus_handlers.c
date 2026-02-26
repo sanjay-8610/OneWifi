@@ -1822,7 +1822,7 @@ void update_speedtest_tout_value()
     int rc = bus_error_success;
     raw_data_t data;
     memset(&data, 0, sizeof(raw_data_t));
-
+    wifi_util_error_print(WIFI_CTRL," SANJI %s:%d  ENTRY\n", __func__, __LINE__);
     wifi_ctrl_t *ctrl = (wifi_ctrl_t *)get_wifictrl_obj();
     if (ctrl == NULL) {
         wifi_util_dbg_print(WIFI_CTRL, "%s:%d NULL Pointer \n", __func__, __LINE__);
@@ -1832,7 +1832,7 @@ void update_speedtest_tout_value()
     rc = get_bus_descriptor()->bus_data_get_fn(&ctrl->handle, name, &data);
     if (data.data_type != bus_data_type_uint32) {
         wifi_util_error_print(WIFI_CTRL,
-            "%s:%d '%s' bus_data_get_fn failed with data_type:0x%x, rc:%\n", __func__, __LINE__,
+            "%s:%d '%s' bus_data_get_fn failed with data_type:0x%x, rc:%d\n", __func__, __LINE__,
             LAST_REBOOT_REASON_NAMESPACE, data.data_type, rc);
         return;
     }
@@ -1846,6 +1846,7 @@ void update_speedtest_tout_value()
     ctrl->speed_test_timeout = (int)data.raw_data.u32;
     wifi_util_dbg_print(WIFI_CTRL, "%s: %d Init time speedtest timeout  : %d\n", __func__, __LINE__,
         ctrl->speed_test_timeout);
+    wifi_util_error_print(WIFI_CTRL," SANJI %s:%d  EXIT\n", __func__, __LINE__);
 }
 
 void event_receive_subscription_handler(char *event_name, bus_error_t error, void *userData)

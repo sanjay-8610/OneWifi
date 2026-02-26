@@ -263,7 +263,7 @@ static int decode_security_blob(wifi_vap_info_t *vap_info, cJSON *security, pErr
     int pass_len = 0;
     char encryption_method[128] = "";
     cJSON *radius_param = NULL;
-
+    wifi_util_error_print(WIFI_CTRL," SANJI %s:%d  ENTRY\n", __func__, __LINE__);
     if (vap_info == NULL) {
         wifi_util_error_print(WIFI_CTRL, "%s: Invalid input parameters\n", __func__);
         return RETURN_ERR;
@@ -341,7 +341,7 @@ static int decode_security_blob(wifi_vap_info_t *vap_info, cJSON *security, pErr
         }
         return RETURN_ERR;
     }
-    strcpy(encryption_method, value);
+    snprintf(encryption_method, sizeof(encryption_method), "%s", value);
 
     param = cJSON_GetObjectItem(security, "ModeEnabled");
     if (!param) {
@@ -476,7 +476,7 @@ static int decode_security_blob(wifi_vap_info_t *vap_info, cJSON *security, pErr
         }
 
         if (strlen(param->valuestring) == 0) {
-            wifi_util_info_print(WIFI_CTRL, "%s: RadiusServerIPAddr is NULL\n ");
+            wifi_util_info_print(WIFI_CTRL, "%s: RadiusServerIPAddr is NULL\n", __func__);
             if (execRetVal) {
                 strncpy(execRetVal->ErrorMsg, "RadiusServerIPAddr is NULL",
                     sizeof(execRetVal->ErrorMsg) - 1);
@@ -679,6 +679,7 @@ static int decode_security_blob(wifi_vap_info_t *vap_info, cJSON *security, pErr
         }
         strncpy(radius_info->s_key, value, sizeof(radius_info->s_key) - 1);
     }
+    wifi_util_error_print(WIFI_CTRL," SANJI %s:%d  EXIT\n", __func__, __LINE__);
     return RETURN_OK;
 }
 

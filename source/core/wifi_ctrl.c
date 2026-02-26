@@ -418,14 +418,18 @@ unsigned int get_Uptime(void)
     char cmd[BUF_SIZE] = {0};
     FILE *fp = NULL;
     unsigned int upSecs = 0;
+    wifi_util_error_print(WIFI_CTRL," SANJI %s:%d  ENTRY\n", __func__, __LINE__);
     snprintf(cmd, sizeof(cmd), "/bin/cat /proc/uptime > %s", FILE_SYSTEM_UPTIME);
     system(cmd);
     fp = fopen(FILE_SYSTEM_UPTIME, "r");
     if (fp != NULL) {
-        fscanf(fp, "%u", &upSecs);
+        if (fscanf(fp, "%u", &upSecs) != 1) {
+            wifi_util_error_print(WIFI_CTRL,"%s : failed to read uptime\n", __FUNCTION__);
+        }
         wifi_util_dbg_print(WIFI_CTRL,"%s : upSecs=%u ......\n", __FUNCTION__, upSecs);
         fclose(fp);
     }
+    wifi_util_error_print(WIFI_CTRL," SANJI %s:%d  EXIT\n", __func__, __LINE__);
     return upSecs;
 }
 
@@ -592,7 +596,7 @@ bool check_for_greylisted_mac_filter(void)
     bool greylist_rfc = false;
     int vap_index = 0;
     wifi_vap_info_map_t *wifi_vap_map = NULL;
-
+    wifi_util_error_print(WIFI_CTRL," SANJI %s:%d  ENTRY\n", __func__, __LINE__);
     wifi_rfc_dml_parameters_t *rfc_info = (wifi_rfc_dml_parameters_t *)get_wifi_db_rfc_parameters();
     if (rfc_info) {
         greylist_rfc = rfc_info->radiusgreylist_rfc;
@@ -603,10 +607,10 @@ bool check_for_greylisted_mac_filter(void)
                     vap_index = wifi_vap_map->vap_array[itrj].vap_index;
                     l_rdk_vap_array = get_wifidb_rdk_vap_info(vap_index);
 
-                    if (l_rdk_vap_array->acl_map != NULL) {
+                    if ((l_rdk_vap_array != NULL) && (l_rdk_vap_array->acl_map != NULL)) {
                         acl_entry = hash_map_get_first(l_rdk_vap_array->acl_map);
                         while(acl_entry != NULL) {
-                            if (acl_entry->mac != NULL && (acl_entry->reason == WLAN_RADIUS_GREYLIST_REJECT)) {
+                            if (acl_entry->reason == WLAN_RADIUS_GREYLIST_REJECT) {
                                 return true;
                             }
                             acl_entry = hash_map_get_next(l_rdk_vap_array->acl_map, acl_entry);
@@ -616,6 +620,7 @@ bool check_for_greylisted_mac_filter(void)
             }
         }
     }
+    wifi_util_error_print(WIFI_CTRL," SANJI %s:%d  EXIT\n", __func__, __LINE__);
     return false;
 }
 

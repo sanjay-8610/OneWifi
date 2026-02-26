@@ -168,7 +168,7 @@ int remove_xfinity_acl_entries(bool remove_all_greylist_entry,bool prefer_privat
     int ret = 0;
     char macfilterkey[128];
     wifi_vap_info_map_t *wifi_vap_map = NULL;
-
+    wifi_util_error_print(WIFI_CTRL," SANJI %s:%d  ENTRY\n", __func__, __LINE__);
     memset(macfilterkey, 0, sizeof(macfilterkey));
     gettimeofday(&tv_now, NULL);
 
@@ -182,7 +182,7 @@ int remove_xfinity_acl_entries(bool remove_all_greylist_entry,bool prefer_privat
 
             l_rdk_vap_array = get_wifidb_rdk_vap_info(vap_index);
 
-            if (l_rdk_vap_array->acl_map != NULL) {
+            if ((l_rdk_vap_array != NULL) && (l_rdk_vap_array->acl_map != NULL)) {
                 acl_entry = hash_map_get_first(l_rdk_vap_array->acl_map);
 
                 while (acl_entry != NULL) {
@@ -199,7 +199,6 @@ int remove_xfinity_acl_entries(bool remove_all_greylist_entry,bool prefer_privat
 
                             wifi_util_error_print(WIFI_MGR, "%s:%d: wifi_delApAclDevice failed. vap_index %d, mac %s \n",
                              __func__, __LINE__, l_rdk_vap_array->vap_index, mac_str);
-                            ret = RETURN_ERR;
                         }
                            acl_entry = hash_map_get_next(l_rdk_vap_array->acl_map, acl_entry);
 
@@ -217,7 +216,7 @@ int remove_xfinity_acl_entries(bool remove_all_greylist_entry,bool prefer_privat
     }
 
     get_wifictrl_obj()->webconfig_state |= ctrl_webconfig_state_macfilter_cfg_rsp_pending;
-
+    wifi_util_error_print(WIFI_CTRL," SANJI %s:%d  EXIT\n", __func__, __LINE__);
     return RETURN_OK;
 }
 void process_unknown_frame_event(frame_data_t *msg, uint32_t msg_length)
