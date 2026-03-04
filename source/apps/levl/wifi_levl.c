@@ -653,6 +653,7 @@ void levl_disassoc_device_event(wifi_app_t *apps, void *data)
 
     assoc_dev_data_t *assoc_data = (assoc_dev_data_t *) data;
     levl_sched_data_t *levl_sc_data = NULL;
+    levl_sched_data_t *p_sc_data = NULL;
     hash_map_t *p_map = NULL, *curr_map = NULL;
     wifi_ctrl_t *ctrl = (wifi_ctrl_t *)get_wifictrl_obj();
     wifi_apps_mgr_t *apps_mgr = NULL;
@@ -689,7 +690,7 @@ void levl_disassoc_device_event(wifi_app_t *apps, void *data)
         wifi_app->data.u.levl.num_current_sounding = 0;
     }
 
-    levl_sc_data = (levl_sched_data_t *)hash_map_get(curr_map, mac_str);
+    levl_sc_data = (levl_sched_data_t *)hash_map_remove(curr_map, mac_str);
     if (levl_sc_data != NULL) {
         //Cancel scheduler Task
         if (levl_sc_data->sched_handler_id != 0) {
@@ -700,23 +701,19 @@ void levl_disassoc_device_event(wifi_app_t *apps, void *data)
         wifi_util_error_print(WIFI_APPS,"%s:%d Disabling Sounding for MAC %02x:...:%02x\n", __func__, __LINE__,
                 assoc_data->dev_stats.cli_MACAddress[0],assoc_data->dev_stats.cli_MACAddress[5]);
         csi_app->data.u.csi.csi_fns.csi_stop_fn(csi_app, assoc_data->ap_index, assoc_data->dev_stats.cli_MACAddress, wifi_app_inst_levl);
-        levl_csi_status_publish(&wifi_app->handle, assoc_data->dev_stats.cli_MACAddress, 0);
     }
+    p_sc_data = (levl_sched_data_t *)hash_map_remove(p_map, mac_str);
 
-    levl_sc_data = (levl_sched_data_t *)hash_map_remove(curr_map, mac_str);
-    if (levl_sc_data != NULL) {
-        free(levl_sc_data);
-    }
-
-    levl_sc_data = (levl_sched_data_t *)hash_map_get(p_map, mac_str);
-    if (levl_sc_data  != NULL) {
+    if (p_sc_data != NULL) {
         wifi_util_dbg_print(WIFI_APPS,"%s:%d Removing from Pending List\n", __func__, __LINE__);
-        levl_sc_data = (levl_sched_data_t *)hash_map_remove(p_map, mac_str);
-        if (levl_sc_data != NULL) {
-            free(levl_sc_data);
-        }
+        free(p_sc_data);
     }
     pthread_mutex_unlock(&wifi_app->data.u.levl.lock);
+
+    if (levl_sc_data != NULL) {
+        levl_csi_status_publish(&wifi_app->handle, assoc_data->dev_stats.cli_MACAddress, 0);
+        free(levl_sc_data);
+    }
     return;
 }
 
