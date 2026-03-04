@@ -291,7 +291,7 @@ void apps_assoc_req_frame_event(wifi_app_t *app, frame_data_t *msg)
     struct ieee80211_mgmt *frame;
     mac_addr_str_t mac_str = { 0 };
     char *str;
-    probe_req_elem_t *elem, *tmp;
+    probe_req_elem_t *elem;
     char namespace[50];
 
     frame = (struct ieee80211_mgmt *)msg->data;
@@ -307,35 +307,24 @@ void apps_assoc_req_frame_event(wifi_app_t *app, frame_data_t *msg)
             __FUNCTION__, __LINE__, msg->frame.ap_index, msg->frame.len, msg->frame.type, msg->frame.dir, str, msg->frame.sig_dbm);
 
     pthread_mutex_lock(&app->data.u.levl.lock);
-    if ((elem = (probe_req_elem_t *)hash_map_get(app->data.u.levl.probe_req_map, mac_str)) == NULL) {
+    elem = (probe_req_elem_t *)hash_map_remove(app->data.u.levl.probe_req_map, mac_str);
+    pthread_mutex_unlock(&app->data.u.levl.lock);
+    if (elem == NULL) {
         wifi_util_dbg_print(WIFI_APPS,"%s:%d:probe not found for mac address:%s\n", __func__, __LINE__, str);
         //assert(1);
         // assoc request bus send
         snprintf(namespace, sizeof(namespace), WIFI_ANALYTICS_FRAME_EVENTS_NAMESPACE, msg->frame.ap_index+1);
-        pthread_mutex_unlock(&app->data.u.levl.lock);
         mgmt_frame_bus_send(&app->handle, namespace, msg);
     } else {
         // prob request bus send
         snprintf(namespace, sizeof(namespace), WIFI_ANALYTICS_FRAME_EVENTS_NAMESPACE, elem->msg_data.frame.ap_index+1);
-        pthread_mutex_unlock(&app->data.u.levl.lock);
         mgmt_frame_bus_send(&app->handle, namespace, &elem->msg_data);
 
         // assoc request bus send
         snprintf(namespace, sizeof(namespace), WIFI_ANALYTICS_FRAME_EVENTS_NAMESPACE, msg->frame.ap_index+1);
         mgmt_frame_bus_send(&app->handle, namespace, msg);
 
-        // remove prob request
-        pthread_mutex_lock(&app->data.u.levl.lock);
-        tmp = elem;
-        frame = (struct ieee80211_mgmt *)tmp->msg_data.data;
-        str = to_mac_str((unsigned char *)frame->sa, mac_str);
-        if (str != NULL) {
-            tmp = hash_map_remove(app->data.u.levl.probe_req_map, str);
-            if (tmp != NULL) {
-                free(tmp);
-            }
-        }
-        pthread_mutex_unlock(&app->data.u.levl.lock);
+        free(elem);
         wifi_util_dbg_print(WIFI_APPS,"%s:%d Send probe and assoc ap_index:%d length:%d type:%d dir:%d rssi:%d\r\n",
                 __FUNCTION__, __LINE__, msg->frame.ap_index, msg->frame.len, msg->frame.type, msg->frame.dir, msg->frame.sig_dbm);
 
@@ -711,9 +700,7 @@ void levl_disassoc_device_event(wifi_app_t *apps, void *data)
         wifi_util_error_print(WIFI_APPS,"%s:%d Disabling Sounding for MAC %02x:...:%02x\n", __func__, __LINE__,
                 assoc_data->dev_stats.cli_MACAddress[0],assoc_data->dev_stats.cli_MACAddress[5]);
         csi_app->data.u.csi.csi_fns.csi_stop_fn(csi_app, assoc_data->ap_index, assoc_data->dev_stats.cli_MACAddress, wifi_app_inst_levl);
-        pthread_mutex_unlock(&wifi_app->data.u.levl.lock);
         levl_csi_status_publish(&wifi_app->handle, assoc_data->dev_stats.cli_MACAddress, 0);
-        pthread_mutex_lock(&wifi_app->data.u.levl.lock);
     }
 
     levl_sc_data = (levl_sched_data_t *)hash_map_remove(curr_map, mac_str);
