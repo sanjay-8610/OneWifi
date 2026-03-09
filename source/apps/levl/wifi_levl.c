@@ -291,13 +291,14 @@ void apps_assoc_req_frame_event(wifi_app_t *app, frame_data_t *msg)
     struct ieee80211_mgmt *frame;
     mac_addr_str_t mac_str = { 0 };
     char *str;
-    probe_req_elem_t *elem, *tmp;
+    probe_req_elem_t *elem;
     char namespace[50];
-
+    wifi_util_error_print(WIFI_CTRL," SANJI %s:%d  ENTRY\n", __func__, __LINE__);
     frame = (struct ieee80211_mgmt *)msg->data;
     str = to_mac_str(frame->sa, mac_str);
     if (str == NULL) {
         wifi_util_dbg_print(WIFI_APPS,"%s:%d mac str convert failure\r\n", __func__, __LINE__);
+	wifi_util_error_print(WIFI_CTRL," SANJI %s:%d  str NULL return\n", __func__, __LINE__);
         return;
     }
 
@@ -307,35 +308,28 @@ void apps_assoc_req_frame_event(wifi_app_t *app, frame_data_t *msg)
             __FUNCTION__, __LINE__, msg->frame.ap_index, msg->frame.len, msg->frame.type, msg->frame.dir, str, msg->frame.sig_dbm);
 
     pthread_mutex_lock(&app->data.u.levl.lock);
-    if ((elem = (probe_req_elem_t *)hash_map_get(app->data.u.levl.probe_req_map, mac_str)) == NULL) {
+    elem = (probe_req_elem_t *)hash_map_remove(app->data.u.levl.probe_req_map, mac_str);
+    wifi_util_error_print(WIFI_CTRL," SANJI %s:%d  hash_map_remove\n", __func__, __LINE__);
+    pthread_mutex_unlock(&app->data.u.levl.lock);
+    if (elem == NULL) {
         wifi_util_dbg_print(WIFI_APPS,"%s:%d:probe not found for mac address:%s\n", __func__, __LINE__, str);
         //assert(1);
         // assoc request bus send
         snprintf(namespace, sizeof(namespace), WIFI_ANALYTICS_FRAME_EVENTS_NAMESPACE, msg->frame.ap_index+1);
-        pthread_mutex_unlock(&app->data.u.levl.lock);
         mgmt_frame_bus_send(&app->handle, namespace, msg);
+	wifi_util_error_print(WIFI_CTRL," SANJI %s:%d  elem is NULL \n", __func__, __LINE__);
     } else {
+	wifi_util_error_print(WIFI_CTRL," SANJI %s:%d  Inside else\n", __func__, __LINE__);
         // prob request bus send
         snprintf(namespace, sizeof(namespace), WIFI_ANALYTICS_FRAME_EVENTS_NAMESPACE, elem->msg_data.frame.ap_index+1);
-        pthread_mutex_unlock(&app->data.u.levl.lock);
         mgmt_frame_bus_send(&app->handle, namespace, &elem->msg_data);
 
         // assoc request bus send
         snprintf(namespace, sizeof(namespace), WIFI_ANALYTICS_FRAME_EVENTS_NAMESPACE, msg->frame.ap_index+1);
         mgmt_frame_bus_send(&app->handle, namespace, msg);
 
-        // remove prob request
-        pthread_mutex_lock(&app->data.u.levl.lock);
-        tmp = elem;
-        frame = (struct ieee80211_mgmt *)tmp->msg_data.data;
-        str = to_mac_str((unsigned char *)frame->sa, mac_str);
-        if (str != NULL) {
-            tmp = hash_map_remove(app->data.u.levl.probe_req_map, str);
-            if (tmp != NULL) {
-                free(tmp);
-            }
-        }
-        pthread_mutex_unlock(&app->data.u.levl.lock);
+        free(elem);
+	wifi_util_error_print(WIFI_CTRL," SANJI %s:%d  free and exit\n", __func__, __LINE__);
         wifi_util_dbg_print(WIFI_APPS,"%s:%d Send probe and assoc ap_index:%d length:%d type:%d dir:%d rssi:%d\r\n",
                 __FUNCTION__, __LINE__, msg->frame.ap_index, msg->frame.len, msg->frame.type, msg->frame.dir, msg->frame.sig_dbm);
 
@@ -661,9 +655,10 @@ void levl_disassoc_device_event(wifi_app_t *apps, void *data)
         wifi_util_error_print(WIFI_APPS,"%s:%d NULL Pointer \n", __func__, __LINE__);
         return;
     }
-
+    wifi_util_error_print(WIFI_CTRL," SANJI %s:%d  ENTRY\n", __func__, __LINE__);
     assoc_dev_data_t *assoc_data = (assoc_dev_data_t *) data;
     levl_sched_data_t *levl_sc_data = NULL;
+    levl_sched_data_t *p_sc_data = NULL;
     hash_map_t *p_map = NULL, *curr_map = NULL;
     wifi_ctrl_t *ctrl = (wifi_ctrl_t *)get_wifictrl_obj();
     wifi_apps_mgr_t *apps_mgr = NULL;
@@ -673,12 +668,14 @@ void levl_disassoc_device_event(wifi_app_t *apps, void *data)
 
     wifi_app = get_app_by_inst(apps_mgr, wifi_app_inst_levl);
     if (wifi_app == NULL) {
+	    wifi_util_error_print(WIFI_CTRL," SANJI %s:%d  wifi_app is NULL\n", __func__, __LINE__);
         wifi_util_error_print(WIFI_APPS,"%s:%d NULL Pointer \n", __func__, __LINE__);
         return;
     }
     pthread_mutex_lock(&wifi_app->data.u.levl.lock);
     wifi_app_t *csi_app = wifi_app->data.u.levl.csi_app;
     if (csi_app == NULL) {
+	    wifi_util_error_print(WIFI_CTRL," SANJI %s:%d  csi_app is null\n", __func__, __LINE__);
         wifi_util_error_print(WIFI_APPS,"%s:%d NULL Pointer \n", __func__, __LINE__);
         pthread_mutex_unlock(&wifi_app->data.u.levl.lock);
         return;
@@ -688,6 +685,7 @@ void levl_disassoc_device_event(wifi_app_t *apps, void *data)
     curr_map = wifi_app->data.u.levl.curr_sounding_mac_map;
     if ((curr_map == NULL) || (p_map == NULL)) {
         wifi_util_error_print(WIFI_APPS,"%s:%d NULL hash map Unable to handle disassoc\n", __func__, __LINE__);
+	wifi_util_error_print(WIFI_CTRL," SANJI %s:%d  curr_map or p_map is NULL\n", __func__, __LINE__);
         pthread_mutex_unlock(&wifi_app->data.u.levl.lock);
         return;
     }
@@ -700,7 +698,8 @@ void levl_disassoc_device_event(wifi_app_t *apps, void *data)
         wifi_app->data.u.levl.num_current_sounding = 0;
     }
 
-    levl_sc_data = (levl_sched_data_t *)hash_map_get(curr_map, mac_str);
+    levl_sc_data = (levl_sched_data_t *)hash_map_remove(curr_map, mac_str);
+    wifi_util_error_print(WIFI_CTRL," SANJI %s:%d  levlscdata check\n", __func__, __LINE__);
     if (levl_sc_data != NULL) {
         //Cancel scheduler Task
         if (levl_sc_data->sched_handler_id != 0) {
@@ -711,25 +710,22 @@ void levl_disassoc_device_event(wifi_app_t *apps, void *data)
         wifi_util_error_print(WIFI_APPS,"%s:%d Disabling Sounding for MAC %02x:...:%02x\n", __func__, __LINE__,
                 assoc_data->dev_stats.cli_MACAddress[0],assoc_data->dev_stats.cli_MACAddress[5]);
         csi_app->data.u.csi.csi_fns.csi_stop_fn(csi_app, assoc_data->ap_index, assoc_data->dev_stats.cli_MACAddress, wifi_app_inst_levl);
-        pthread_mutex_unlock(&wifi_app->data.u.levl.lock);
-        levl_csi_status_publish(&wifi_app->handle, assoc_data->dev_stats.cli_MACAddress, 0);
-        pthread_mutex_lock(&wifi_app->data.u.levl.lock);
     }
 
-    levl_sc_data = (levl_sched_data_t *)hash_map_remove(curr_map, mac_str);
-    if (levl_sc_data != NULL) {
-        free(levl_sc_data);
-    }
-
-    levl_sc_data = (levl_sched_data_t *)hash_map_get(p_map, mac_str);
-    if (levl_sc_data  != NULL) {
+    p_sc_data = (levl_sched_data_t *)hash_map_remove(p_map, mac_str);
+    if (p_sc_data != NULL) {
         wifi_util_dbg_print(WIFI_APPS,"%s:%d Removing from Pending List\n", __func__, __LINE__);
-        levl_sc_data = (levl_sched_data_t *)hash_map_remove(p_map, mac_str);
-        if (levl_sc_data != NULL) {
-            free(levl_sc_data);
-        }
+        free(p_sc_data);
     }
     pthread_mutex_unlock(&wifi_app->data.u.levl.lock);
+
+    if (levl_sc_data != NULL) {
+        wifi_util_error_print(WIFI_CTRL," SANJI %s:%d  calling levl_csi_status_publish before\n", __func__, __LINE__);
+        levl_csi_status_publish(&wifi_app->handle, assoc_data->dev_stats.cli_MACAddress, 0);
+        wifi_util_error_print(WIFI_CTRL," SANJI %s:%d  after call publish\n", __func__, __LINE__);
+        free(levl_sc_data);
+    }
+    wifi_util_error_print(WIFI_CTRL," SANJI %s:%d  EXIT\n", __func__, __LINE__);
     return;
 }
 
