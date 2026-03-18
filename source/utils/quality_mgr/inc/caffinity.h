@@ -31,6 +31,7 @@
 class caffinity_t
 {
     pthread_mutex_t m_lock;
+    pthread_mutex_t m_vec_lock;
     mac_addr_str_t m_mac;
     unsigned int m_auth_failures;
     unsigned int m_auth_attempts;
@@ -44,12 +45,15 @@ class caffinity_t
     struct timespec  m_connected_time;
     struct timespec  m_sleep_time;
     struct timespec  m_total_time;
+    std::vector<stats_arg_t> m_stats_arr;
 public:
     caffinity_t(mac_addr_str_t *mac);
     ~caffinity_t();
+    int init(stats_arg_t *stats);
     int update_affinity_stats(affinity_arg_t *arg);
     int update_dhcp_stats(unsigned char *mac, uint32_t dhcp_attempts, uint32_t dhcp_failures);
     int score();
+    double run_algorithm_caffinity();
    
 };
 

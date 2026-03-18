@@ -426,3 +426,109 @@ export function renderConnectionAffinityCharts(data) {
   }, { responsive: true });
 }
 
+// --------------------
+// Render CAffinityScore Charts (Bar Graph)
+// --------------------
+let caffinityMultiChartDiv = null;
+let caffinityAggregateChartDiv = null;
+
+export function renderCAffinityScoreCharts(data) {
+  const multiContainer = document.getElementById('caffinityMultiContainer');
+  const aggregateDiv = document.getElementById('caffinityAggregateChart');
+  if (!multiContainer || !aggregateDiv || !data) return;
+
+  const COLORS = ['#1f77b4','#ff7f0e','#2ca02c','#d62728','#9467bd','#8c564b','#e377c2','#7f7f7f','#bcbd22','#17becf'];
+
+  // Get devices from ConnectedClients array with CAffinityScore data
+  const devicesWithScores = (data.ConnectedClients || [])
+    .filter(d => d.CAffinityScore && d.CAffinityScore.Score && d.CAffinityScore.Score.length > 0);
+
+  if (devicesWithScores.length === 0) {
+    // Clear charts if no data
+    if (caffinityMultiChartDiv) caffinityMultiChartDiv.innerHTML = '<p style="text-align:center;color:#666;padding:40px;">No caffinity score data available yet.</p>';
+    if (caffinityAggregateChartDiv) caffinityAggregateChartDiv.innerHTML = '';
+    return;
+  }
+
+  // Build global time axis from all devices
+  const timeSet = new Set();
+  devicesWithScores.forEach(d => {
+    if (d.CAffinityScore.Time) {
+      d.CAffinityScore.Time.forEach(t => timeSet.add(t));
+    }
+  });
+  const timeAxis = Array.from(timeSet).sort((a, b) => a - b);
+
+  // Align scores to global timeAxis for each device
+  const allDevices = devicesWithScores.map((d, idx) => {
+    const alignedScore = timeAxis.map(t => {
+      const i = d.CAffinityScore.Time.indexOf(t);
+      return i !== -1 ? d.CAffinityScore.Score[i] : null;
+    });
+    return {
+      MAC: d.MAC,
+      Score: alignedScore,
+      color: COLORS[idx % COLORS.length]
+    };
+  });
+
+  // Multi client bar chart
+  const barTraces = allDevices.map(d => ({
+    x: timeAxis,
+    y: d.Score,
+    type: 'bar',
+    name: d.MAC,
+    marker: { color: d.color }
+  }));
+
+  if (!caffinityMultiChartDiv) {
+    caffinityMultiChartDiv = document.createElement('div');
+    caffinityMultiChartDiv.style.height = '420px';
+    caffinityMultiChartDiv.style.width = '100%';
+    multiContainer.appendChild(caffinityMultiChartDiv);
+  }
+
+  Plotly.react(caffinityMultiChartDiv, barTraces, {
+    title: { text: '<b>Connection Affinity Score — Clients Score</b>', x: 0.5, xanchor: 'center' },
+    xaxis: { title: 'Time', tickangle: -45 },
+    yaxis: { title: 'Score', range: [0, 1], tick0: 0, dtick: 0.1 },
+    barmode: 'group',
+    height: 420,
+    margin: { t: 80, l: 60, r: 60, b: 60 }
+  }, { responsive: true });
+
+  // Aggregate line chart
+  const aggregateValues = timeAxis.map((_, i) => {
+    let sum = 0, count = 0;
+    allDevices.forEach(d => {
+      const val = d.Score[i];
+      if (val !== null && val !== undefined) {
+        sum += val;
+        count++;
+      }
+    });
+    return count ? sum / count : 0;
+  });
+
+  if (!caffinityAggregateChartDiv) {
+    caffinityAggregateChartDiv = document.createElement('div');
+    caffinityAggregateChartDiv.style.height = '420px';
+    caffinityAggregateChartDiv.style.width = '100%';
+    aggregateDiv.appendChild(caffinityAggregateChartDiv);
+  }
+
+  Plotly.react(caffinityAggregateChartDiv, [{
+    x: timeAxis,
+    y: aggregateValues,
+    type: 'scatter',
+    mode: 'lines',
+    name: 'Aggregate',
+    line: { color: '#d62728', width: 3 }
+  }], {
+    title: { text: '<b>Connection Affinity Score — Aggregate Score</b>', x: 0.5, xanchor: 'center' },
+    xaxis: { title: 'Time', tickangle: -45 },
+    yaxis: { title: 'Score', range: [0, 1], tick0: 0, dtick: 0.1 },
+    height: 420,
+    margin: { t: 80, l: 60, r: 60, b: 60 }
+  }, { responsive: true });
+}

@@ -31,6 +31,40 @@
 #include "wifi_events.h"
 #include "caffinity.h"
 
+int caffinity_t::init(stats_arg_t *stats)
+{
+    if (!stats) {
+        wifi_util_error_print(WIFI_CTRL, "caffinity %s:%d NULL stats pointer\n", __func__, __LINE__);
+        return -1;
+    }
+
+    wifi_util_info_print(WIFI_CTRL, "caffinity %s:%d Updating SNR for MAC %s, cli_SNR=%d, channel_utilization=%d\n",
+        __func__, __LINE__, stats->mac_str, stats->dev.cli_SNR, stats->channel_utilization);
+
+    pthread_mutex_lock(&m_vec_lock);
+    if (m_stats_arr.empty()) {
+        // First time - create new entry
+        stats_arg_t new_stats;
+        memset(&new_stats, 0, sizeof(stats_arg_t));
+        strncpy(new_stats.mac_str, stats->mac_str, sizeof(new_stats.mac_str) - 1);
+        new_stats.mac_str[sizeof(new_stats.mac_str) - 1] = '\0';
+        new_stats.dev.cli_SNR = stats->dev.cli_SNR;
+        new_stats.channel_utilization = stats->channel_utilization;
+        m_stats_arr.push_back(new_stats);
+        wifi_util_info_print(WIFI_CTRL, "caffinity %s:%d Created new stats entry for MAC %s with SNR=%d, channel_util=%d\n",
+            __func__, __LINE__, stats->mac_str, stats->dev.cli_SNR, stats->channel_utilization);
+    } else {
+        // Update existing entry - update cli_SNR and channel_utilization
+        m_stats_arr[0].dev.cli_SNR = stats->dev.cli_SNR;
+        m_stats_arr[0].channel_utilization = stats->channel_utilization;
+        wifi_util_info_print(WIFI_CTRL, "caffinity %s:%d Updated existing stats for MAC %s with SNR=%d, channel_util=%d\n",
+            __func__, __LINE__, stats->mac_str, stats->dev.cli_SNR, stats->channel_utilization);
+    }
+    pthread_mutex_unlock(&m_vec_lock);
+
+    return 0;
+}
+
 int caffinity_t::update_affinity_stats(affinity_arg_t *arg)
 {
     wifi_util_info_print(WIFI_CTRL, "caffinity CAFF %s:%d event=%d\n", __func__, __LINE__, arg->event);
@@ -127,6 +161,114 @@ int caffinity_t::update_dhcp_stats(unsigned char *mac, uint32_t dhcp_attempts, u
     return 0;
 }
 
+double caffinity_t::run_algorithm_caffinity()
+{
+    double score = 0.0;
+    double failure_ratio = 0.0;
+    double auth_failure_rate = 0.0;
+    double assoc_failure_rate = 0.0;
+    double dhcp_failure_rate = 0.0;
+    double snr_normalized = 0.0;
+    double snr_squared = 0.0;
+    double sigmoid_factor = 0.0;
+    double exponent = 0.0;
+    int channel_utilization = 0;
+    int cli_snr = 0;
+    bool has_stats = false;
+    
+    wifi_util_info_print(WIFI_CTRL, "caffinity %s:%d Computing caffinity score for MAC %s\n", 
+        __func__, __LINE__, m_mac);
+    
+    // Check if stats are available first
+    pthread_mutex_lock(&m_vec_lock);
+    if (!m_stats_arr.empty()) {
+        cli_snr = m_stats_arr[0].dev.cli_SNR;
+        channel_utilization = m_stats_arr[0].channel_utilization;
+        has_stats = true;
+        wifi_util_info_print(WIFI_CTRL, "caffinity %s:%d cli_SNR=%d, channel_utilization=%d\n",
+            __func__, __LINE__, cli_snr, channel_utilization);
+    } else {
+        wifi_util_dbg_print(WIFI_CTRL, "caffinity %s:%d m_stats_arr is empty for MAC %s, returning -1.0\n",
+            __func__, __LINE__, m_mac);
+    }
+    pthread_mutex_unlock(&m_vec_lock);
+    
+    // Return -1.0 to indicate stats not available yet
+    if (!has_stats) {
+        return -1.0;
+    }
+    
+    pthread_mutex_lock(&m_lock);
+    
+    // Calculate failure rates with division-by-zero protection
+    if (m_auth_attempts > 0) {
+        auth_failure_rate = (double)m_auth_failures / (double)m_auth_attempts;
+    }
+    
+    if (m_assoc_attempts > 0) {
+        assoc_failure_rate = (double)m_assoc_failures / (double)m_assoc_attempts;
+    }
+    
+    if (m_dhcp_attempts > 0) {
+        dhcp_failure_rate = (double)m_dhcp_failures / (double)m_dhcp_attempts;
+    }
+    
+    pthread_mutex_unlock(&m_lock);
+    
+    // Sum failure rates
+    failure_ratio = auth_failure_rate + assoc_failure_rate + dhcp_failure_rate;
+    
+    // Clamp failure_ratio to [0, 1]
+    if (failure_ratio < 0.0) failure_ratio = 0.0;
+    if (failure_ratio > 1.0) failure_ratio = 1.0;
+    
+    wifi_util_info_print(WIFI_CTRL, "caffinity %s:%d failure_ratio=%.4f (auth=%.4f, assoc=%.4f, dhcp=%.4f)\n",
+        __func__, __LINE__, failure_ratio, auth_failure_rate, assoc_failure_rate, dhcp_failure_rate);
+    
+    // Normalize SNR to [0, 1] range
+    // Assuming max SNR is 25 (can be adjusted based on radio type)
+    if (cli_snr > 0) {
+        snr_normalized = (double)cli_snr / 25.0;
+    } else {
+        snr_normalized = 0.0;
+    }
+    
+    // Clamp snr_normalized to [0, 1]
+    if (snr_normalized < 0.0) snr_normalized = 0.0;
+    if (snr_normalized > 1.0) snr_normalized = 1.0;
+    
+    // Square the normalized SNR
+    snr_squared = snr_normalized * snr_normalized;
+    
+    wifi_util_info_print(WIFI_CTRL, "caffinity %s:%d snr_normalized=%.4f, snr_squared=%.4f\n",
+        __func__, __LINE__, snr_normalized, snr_squared);
+    
+    // Compute sigmoid factor: 1 / (1 + exp(-(b0 + b1 * channel_utilization)))
+    // Using LINK_QTY_B0 and LINK_QTY_B1 constants
+    exponent = -(LINK_QTY_B0 + LINK_QTY_B1 * channel_utilization);
+    
+    // Clamp exponent to safe range for numerical stability
+    if (exponent < -50.0) exponent = -50.0;
+    if (exponent > 50.0) exponent = 50.0;
+    
+    sigmoid_factor = 1.0 / (1.0 + exp(exponent));
+    
+    wifi_util_info_print(WIFI_CTRL, "caffinity %s:%d exponent=%.4f, sigmoid_factor=%.4f\n",
+        __func__, __LINE__, exponent, sigmoid_factor);
+    
+    // Calculate final score: (1 - failure_ratio) * snr_squared * sigmoid_factor
+    score = (1.0 - failure_ratio) * snr_squared * sigmoid_factor;
+    
+    // Clamp final score to [0, 1]
+    if (score < 0.0) score = 0.0;
+    if (score > 1.0) score = 1.0;
+    
+    wifi_util_info_print(WIFI_CTRL, "caffinity %s:%d FINAL SCORE=%.4f for MAC %s\n",
+        __func__, __LINE__, score, m_mac);
+    
+    return score;
+}
+
 int caffinity_t::score()
 {
     int score = 0;
@@ -139,6 +281,7 @@ caffinity_t::caffinity_t(mac_addr_str_t *mac)
     strncpy(m_mac, *mac, sizeof(m_mac) - 1);
     m_mac[sizeof(m_mac) - 1] = '\0';
     pthread_mutex_init(&m_lock, NULL);
+    pthread_mutex_init(&m_vec_lock, NULL);
     m_auth_failures = 0;
     m_auth_attempts = 0;
     m_assoc_failures = 0;
@@ -157,4 +300,6 @@ caffinity_t::caffinity_t(mac_addr_str_t *mac)
 caffinity_t::~caffinity_t()
 {
    pthread_mutex_destroy(&m_lock);
+   pthread_mutex_destroy(&m_vec_lock);
+   m_stats_arr.clear();
 }

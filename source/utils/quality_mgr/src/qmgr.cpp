@@ -114,6 +114,75 @@ void qmgr_t::update_json(const char *str, vector_t v, cJSON *out_obj, bool &alar
     return;
 }
 
+void qmgr_t::update_caffinity_json(const char *str, double caffinity_score)
+{
+    pthread_mutex_lock(&m_json_lock);
+    char tmp[MAX_LINE_SIZE];
+    unsigned int i;
+    cJSON *arr;
+    cJSON *caff_obj, *dev_obj;
+    bool found = false;
+ 
+    // Get ConnectedClients array
+    if ((arr = cJSON_GetObjectItem(caffinity_out_obj, "ConnectedClients")) == NULL) {
+        pthread_mutex_unlock(&m_json_lock);
+        return;
+    }
+    
+    // Find device by MAC
+    for (i = 0; i < cJSON_GetArraySize(arr); i++) {
+        dev_obj = cJSON_GetArrayItem(arr, i);
+        if (strncmp(cJSON_GetStringValue(cJSON_GetObjectItem(dev_obj, "MAC")), str, strlen(str)) == 0) {
+            found = true;
+            break;
+        }
+    }
+    
+    if (found == false) {
+        pthread_mutex_unlock(&m_json_lock);
+        return;
+    }
+    
+    // Get CAffinityScore object
+    caff_obj = cJSON_GetObjectItem(dev_obj, "CAffinityScore");
+    if (caff_obj == NULL) {
+        pthread_mutex_unlock(&m_json_lock);
+        return;
+    }
+    
+    // Add score to Score array
+    arr = cJSON_GetObjectItem(caff_obj, "Score");
+    if (arr != NULL) {
+        cJSON_AddItemToArray(arr, cJSON_CreateNumber(caffinity_score));
+        trim_cjson_array(arr, MAX_HISTORY);
+    }
+    
+    // Add timestamp to Time array
+    arr = cJSON_GetObjectItem(caff_obj, "Time");
+    if (arr != NULL) {
+        cJSON_AddItemToArray(arr, cJSON_CreateString(get_local_time(tmp, sizeof(tmp), true)));
+        trim_cjson_array(arr, MAX_HISTORY);
+    }
+    
+    pthread_mutex_unlock(&m_json_lock);
+    return;
+}
+
+void qmgr_t::update_caffinity_graph()
+{
+    pthread_mutex_lock(&m_json_lock);
+    char *json = cJSON_PrintUnformatted(caffinity_out_obj);
+    wifi_util_dbg_print(WIFI_APPS,"%s:%d Caffinity JSON: %s\n",__func__,__LINE__,json); 
+    FILE *fp = fopen("/www/data/caffinity_telemetry.json", "w");
+    if (fp) {
+        fputs(json, fp);
+        fclose(fp);
+    }
+    free(json);
+    pthread_mutex_unlock(&m_json_lock);
+    return;
+}
+
 
 int qmgr_t::push_reporting_subdoc()
 {
@@ -236,6 +305,41 @@ int qmgr_t::run()
                 update_json(mac_str, v, out_obj, alarm);
                 lq = (linkq_t *)hash_map_get_next(m_link_map, lq);
             }
+            
+            // --- Process caffinity objects and compute scores ---
+            // Only compute if caffinity map is not empty
+            if (!m_caffinity_map.empty()) {
+                wifi_util_info_print(WIFI_CTRL, "CAFF %s:%d Processing caffinity scores for %zu MACs\n",
+                    __func__, __LINE__, m_caffinity_map.size());
+                
+                for (auto& pair : m_caffinity_map) {
+                    const std::string& mac_key = pair.first;
+                    caffinity_t *caff = pair.second;
+                    
+                    if (caff) {
+                        // Only compute score if stats are available
+                        // run_algorithm_caffinity() will check m_stats_arr internally
+                        double caffinity_score = caff->run_algorithm_caffinity();
+                        //
+                        
+                        // Only log/process if score is valid (> 0 means stats were present)
+                        if (caffinity_score >= 0.0) {
+                            wifi_util_info_print(WIFI_CTRL, "CAFF %s:%d MAC %s caffinity_score=%.4f\n",
+                                __func__, __LINE__, mac_key.c_str(), caffinity_score);
+                            
+                            // Update caffinity score in JSON/reporting structure
+                            update_caffinity_json(mac_key.c_str(), caffinity_score);
+                        } else {
+                            wifi_util_dbg_print(WIFI_CTRL, "CAFF %s:%d MAC %s has no valid stats yet, skipping\n",
+                                __func__, __LINE__, mac_key.c_str());
+                        }
+                    }
+                }
+            } else {
+                wifi_util_dbg_print(WIFI_CTRL, "CAFF %s:%d No caffinity objects yet, skipping score computation\n",
+                    __func__, __LINE__);
+            }
+            
             count = hash_map_count(m_link_map);
             if (count == 0 ) {
                 remove(m_args.output_file);
@@ -244,6 +348,7 @@ int qmgr_t::run()
                 start_time = tm;
                 update_alarm = false;
                 update_graph(out_obj);
+                update_caffinity_graph();  // Write caffinity telemetry to separate file
                 if (qmgr_is_batch_registered()) {
                     push_reporting_subdoc();   // batch mode
                 }
@@ -290,9 +395,65 @@ cJSON *qmgr_t::create_dev_template(mac_addr_str_t mac_str,unsigned int vap_index
     snprintf(tmp, sizeof(tmp), "Alarms");
     cJSON_AddItemToObject(lq_obj, tmp, cJSON_CreateArray());
     
-    
     snprintf(tmp, sizeof(tmp), "Time");
     cJSON_AddItemToObject(obj, tmp, cJSON_CreateArray());
+    
+    return obj;
+}
+
+cJSON *qmgr_t::create_caffinity_dev_template(mac_addr_str_t mac_str, unsigned int vap_index)
+{
+    cJSON *obj, *caff_obj;
+    char tmp[MAX_LINE_SIZE];
+    
+    obj = cJSON_CreateObject();
+    
+    snprintf(tmp, sizeof(tmp), "MAC");
+    cJSON_AddItemToObject(obj, tmp, cJSON_CreateString(mac_str));
+    
+    snprintf(tmp, sizeof(tmp), "VapIndex");
+    cJSON_AddItemToObject(obj, tmp, cJSON_CreateNumber(vap_index));
+    
+    // Create CAffinityScore object
+    caff_obj = cJSON_CreateObject();
+    snprintf(tmp, sizeof(tmp), "CAffinityScore");
+    cJSON_AddItemToObject(obj, tmp, caff_obj);
+    
+    snprintf(tmp, sizeof(tmp), "Score");
+    cJSON_AddItemToObject(caff_obj, tmp, cJSON_CreateArray());
+    
+    snprintf(tmp, sizeof(tmp), "Time");
+    cJSON_AddItemToObject(caff_obj, tmp, cJSON_CreateArray());
+    
+    return obj;
+}
+
+cJSON *qmgr_t::create_caffinity_unconnected_template(mac_addr_str_t mac_str, unsigned int last_vap_index)
+{
+    cJSON *obj, *caff_obj;
+    char tmp[MAX_LINE_SIZE];
+    
+    obj = cJSON_CreateObject();
+    
+    snprintf(tmp, sizeof(tmp), "MAC");
+    cJSON_AddItemToObject(obj, tmp, cJSON_CreateString(mac_str));
+    
+    snprintf(tmp, sizeof(tmp), "LastSeenVapIndex");
+    cJSON_AddItemToObject(obj, tmp, cJSON_CreateNumber(last_vap_index));
+    
+    snprintf(tmp, sizeof(tmp), "LastSeen");
+    cJSON_AddItemToObject(obj, tmp, cJSON_CreateString(get_local_time(tmp, sizeof(tmp), false)));
+    
+    // Create CAffinityScore object
+    caff_obj = cJSON_CreateObject();
+    snprintf(tmp, sizeof(tmp), "CAffinityScore");
+    cJSON_AddItemToObject(obj, tmp, caff_obj);
+    
+    snprintf(tmp, sizeof(tmp), "Score");
+    cJSON_AddItemToObject(caff_obj, tmp, cJSON_CreateArray());
+    
+    snprintf(tmp, sizeof(tmp), "Time");
+    cJSON_AddItemToObject(caff_obj, tmp, cJSON_CreateArray());
     
     return obj;
 }
@@ -619,6 +780,12 @@ int qmgr_t::init(stats_arg_t *stats, bool create_flag)
     if (!device_exists) {
         wifi_util_info_print(WIFI_APPS,"Adding new device %s\n", mac_str);
         cJSON_AddItemToArray(dev_arr, create_dev_template(mac_str, stats->vap_index));
+        
+        // Also add to caffinity telemetry JSON
+        cJSON *caff_dev_arr = cJSON_GetObjectItem(caffinity_out_obj, "ConnectedClients");
+        if (caff_dev_arr) {
+            cJSON_AddItemToArray(caff_dev_arr, create_caffinity_dev_template(mac_str, stats->vap_index));
+        }
     }
 
     linkq_t *lq = (linkq_t *)hash_map_get(m_link_map, mac_str);
@@ -631,6 +798,37 @@ int qmgr_t::init(stats_arg_t *stats, bool create_flag)
     lq->init(m_args.threshold,
              m_args.reporting ,
              stats);
+
+    // --- Update caffinity SNR for this MAC ---
+    std::string mac_key(mac_str);
+    caffinity_t *caff = nullptr;
+    
+    auto it = m_caffinity_map.find(mac_key);
+    if (it == m_caffinity_map.end()) {
+        // Create new caffinity object for this MAC
+        wifi_util_info_print(WIFI_CTRL, "CAFF qmgr_t %s:%d Creating new caffinity_t for MAC %s\n",
+            __func__, __LINE__, mac_str);
+        mac_addr_str_t mac_str_array;
+        strncpy(mac_str_array, mac_str, sizeof(mac_str_array) - 1);
+        mac_str_array[sizeof(mac_str_array) - 1] = '\0';
+        caff = new caffinity_t(&mac_str_array);
+        if (caff) {
+            m_caffinity_map[mac_key] = caff;
+            wifi_util_info_print(WIFI_CTRL, "CAFF qmgr_t %s:%d Successfully created caffinity_t for MAC %s\n",
+                __func__, __LINE__, mac_str);
+        }
+    } else {
+        caff = it->second;
+        wifi_util_info_print(WIFI_CTRL, "CAFF qmgr_t %s:%d Found existing caffinity_t for MAC %s\n",
+            __func__, __LINE__, mac_str);
+    }
+    
+    if (caff) {
+        wifi_util_info_print(WIFI_CTRL, "CAFF qmgr_t %s:%d Calling caffinity_t::init() for MAC %s with SNR=%d\n",
+            __func__, __LINE__, mac_str, stats->dev.cli_SNR);
+        caff->init(stats);
+    }
+
     pthread_mutex_unlock(&m_json_lock);
     return 0;
 }
@@ -733,6 +931,12 @@ qmgr_t::qmgr_t()
     m_link_map = hash_map_create();
     out_obj = cJSON_CreateObject();
     affinity_obj = cJSON_CreateObject();
+    
+    // Initialize caffinity telemetry JSON with future-proof structure
+    caffinity_out_obj = cJSON_CreateObject();
+    cJSON_AddItemToObject(caffinity_out_obj, "ConnectedClients", cJSON_CreateArray());
+    cJSON_AddItemToObject(caffinity_out_obj, "UnconnectedClients", cJSON_CreateArray());
+    
     m_bg_running = false;
     m_exit = false;
     pthread_mutex_init(&m_json_lock, NULL);
@@ -744,6 +948,12 @@ qmgr_t::qmgr_t(server_arg_t *args,stats_arg_t *stats)
 {
     memcpy(&m_args, args, sizeof(server_arg_t));
     memcpy(&m_stats, stats, sizeof(stats_arg_t));
+    
+    // Initialize caffinity telemetry JSON with future-proof structure
+    caffinity_out_obj = cJSON_CreateObject();
+    cJSON_AddItemToObject(caffinity_out_obj, "ConnectedClients", cJSON_CreateArray());
+    cJSON_AddItemToObject(caffinity_out_obj, "UnconnectedClients", cJSON_CreateArray());
+    
     m_exit = false;
     m_bg_running = false;
     m_link_map = hash_map_create();

@@ -53,10 +53,13 @@ class qmgr_t {
     bool m_bg_running;
     cJSON *out_obj;
     cJSON *affinity_obj;
+    cJSON *caffinity_out_obj;  // Separate JSON for caffinity telemetry
     std::unordered_map<const char*, affinity_arg_t> m_affinity_map;
     std::unordered_map<std::string, caffinity_t*> m_caffinity_map;
 
     cJSON* create_affinity_template(mac_addr_str_t mac_str,unsigned int vap_index);
+    cJSON* create_caffinity_dev_template(mac_addr_str_t mac_str, unsigned int vap_index);
+    cJSON* create_caffinity_unconnected_template(mac_addr_str_t mac_str, unsigned int last_vap_index);
 public:
     int init(stats_arg_t *arg,bool create_flag);
     int rapid_disconnect(stats_arg_t *arg);
@@ -74,6 +77,8 @@ public:
     cJSON *create_dev_template(mac_addr_str_t mac_str,unsigned int vap_index);
     static int set_max_snr_radios(radio_max_snr_t *max_snr_val);    
     void update_json(const char *str, vector_t v, cJSON *out_obj, bool &alarm);
+    void update_caffinity_json(const char *str, double caffinity_score);
+    void update_caffinity_graph();
     void register_station_mac(const char* str);
     void unregister_station_mac(const char* str);
     static void destroy_instance();
