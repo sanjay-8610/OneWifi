@@ -90,6 +90,7 @@ typedef struct {
     unsigned int radio_index;
     int channel_utilization;
     int event;
+    unsigned int status_code;  // For assoc/reassoc response frames
   } affinity_arg_t;
 
 
@@ -133,6 +134,11 @@ int set_max_snr_radios(radio_max_snr_t *max_snr_val);
 
 /* Connection Affinity related helper functions */
 int update_affinity_stats(affinity_arg_t *arg,bool flag);
+
+/* DHCP statistics helper functions */
+void dhcp_get_client_stats(unsigned char *mac, uint32_t *dhcp_attempts, uint32_t *dhcp_failures);
+int update_dhcp_stats(mac_addr_str_t mac_str, uint32_t dhcp_attempts, uint32_t dhcp_failures);
+
 #ifdef __cplusplus
 }
 #endif

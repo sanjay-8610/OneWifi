@@ -42,6 +42,7 @@ class qmgr_t {
     pthread_mutex_t m_json_lock;
     stats_arg_t    m_stats;
     linkq_t *lq;
+    caffinity_t *caff;
     hash_map_t *m_link_map;
     static qmgr_t *instance;
     qmgr_t();
@@ -53,6 +54,7 @@ class qmgr_t {
     cJSON *out_obj;
     cJSON *affinity_obj;
     std::unordered_map<const char*, affinity_arg_t> m_affinity_map;
+    std::unordered_map<std::string, caffinity_t*> m_caffinity_map;
 
     cJSON* create_affinity_template(mac_addr_str_t mac_str,unsigned int vap_index);
 public:
@@ -79,6 +81,7 @@ public:
     static int get_quality_flags(quality_flags_t *flag);
     void update_graph( cJSON *out_obj);
     int update_affinity_stats(affinity_arg_t *arg,bool flag);
+    int update_dhcp_stats(mac_addr_str_t mac_str, uint32_t dhcp_attempts, uint32_t dhcp_failures);
     ~qmgr_t();
 };
 

@@ -99,7 +99,7 @@ void qmgr_t::update_json(const char *str, vector_t v, cJSON *out_obj, bool &alar
     }
 
     if (v.m_num > MAX_LEN) {
-        wifi_util_error_print(WIFI_APPS,"ERROR: Invalid m_num=%d (MAX_LEN=%d) for MAC %s\n", v.m_num, MAX_LEN, str);
+        //wifi_util_error_print(WIFI_APPS,"ERROR: Invalid m_num=%d (MAX_LEN=%d) for MAC %s\n", v.m_num, MAX_LEN, str);
         pthread_mutex_unlock(&m_json_lock);
         return;
     }
@@ -305,6 +305,13 @@ void qmgr_t::deinit()
     // Wait for thread to finish
     pthread_join(m_thread, nullptr);
     pthread_cond_destroy(&m_cond);
+    
+    // Clean up caffinity map
+    for (auto& pair : m_caffinity_map) {
+        delete pair.second;
+    }
+    m_caffinity_map.clear();
+    
     hash_map_destroy(m_link_map);
     wifi_util_info_print(WIFI_APPS," %s:%d\n",__func__,__LINE__);
     return;
@@ -361,9 +368,12 @@ int qmgr_t::reinit(server_arg_t *args)
 }
 int qmgr_t::update_affinity_stats(affinity_arg_t *arg, bool create_flag)
 {
+    wifi_util_info_print(WIFI_APPS,"CAFF qmgr_t %s:%d event=%d create_flag=%d\n",__func__,__LINE__, arg->event, create_flag);
     mac_addr_str_t mac_str;
     strncpy(mac_str, arg->mac_str, sizeof(mac_str) - 1);
     mac_str[sizeof(mac_str) - 1] = '\0';
+    
+    wifi_util_info_print(WIFI_CTRL, "CAFF qmgr_t %s:%d Processing MAC %s\n", __func__, __LINE__, mac_str);
 
     pthread_mutex_lock(&m_json_lock);
 
@@ -459,7 +469,100 @@ int qmgr_t::update_affinity_stats(affinity_arg_t *arg, bool create_flag)
             "Added client %s to Connected_client\n", mac_str);
     }
 
+    /* ---------- HANDLE CAFFINITY MAP FOR ASSOC/AUTH EVENTS ---------- */
+    // Handle caffinity map creation/update for assoc and auth events
+    if (create_flag) {
+        // Convert MAC string to byte array
+        unsigned char mac[6];
+        if (sscanf(mac_str, "%hhx:%hhx:%hhx:%hhx:%hhx:%hhx",
+                   &mac[0], &mac[1], &mac[2], &mac[3], &mac[4], &mac[5]) != 6) {
+            wifi_util_error_print(WIFI_CTRL, "CAFF qmgr_t %s:%d Failed to parse MAC: %s\n",
+                __func__, __LINE__, mac_str);
+        } else {
+            // Find or create caffinity_t object for this MAC
+            std::string mac_key(mac_str);
+            auto it = m_caffinity_map.find(mac_key);
+            caffinity_t *caff = nullptr;
+            
+            if (it == m_caffinity_map.end()) {
+                wifi_util_info_print(WIFI_CTRL, "CAFF qmgr_t %s:%d Creating new caffinity_t for MAC %s\n",
+                    __func__, __LINE__, mac_str);
+                // Create local array variable to pass its address to constructor
+                mac_addr_str_t mac_str_array;
+                strncpy(mac_str_array, mac_str, sizeof(mac_str_array) - 1);
+                mac_str_array[sizeof(mac_str_array) - 1] = '\0';
+                caff = new caffinity_t(&mac_str_array);
+                if (caff) {
+                    m_caffinity_map[mac_key] = caff;
+                    wifi_util_info_print(WIFI_CTRL, "CAFF qmgr_t %s:%d Successfully created and stored caffinity_t for MAC %s\n",
+                        __func__, __LINE__, mac_str);
+                } else {
+                    wifi_util_error_print(WIFI_CTRL, "CAFF qmgr_t %s:%d Failed to create caffinity_t\n",
+                        __func__, __LINE__);
+                }
+            } else {
+                caff = it->second;
+                wifi_util_info_print(WIFI_CTRL, "CAFF qmgr_t %s:%d Found existing caffinity_t for MAC %s\n",
+                    __func__, __LINE__, mac_str);
+            }
+            
+            // Update affinity stats in caffinity object
+            if (caff) {
+                wifi_util_info_print(WIFI_CTRL, "CAFF qmgr_t %s:%d Calling caffinity_t::update_affinity_stats for event=%d\n",
+                    __func__, __LINE__, arg->event);
+                caff->update_affinity_stats(arg);
+            }
+        }
+    }
+
     pthread_mutex_unlock(&m_json_lock);
+    return 0;
+}
+
+
+
+int qmgr_t::update_dhcp_stats(mac_addr_str_t mac_str, uint32_t dhcp_attempts, uint32_t dhcp_failures)
+{
+    wifi_util_dbg_print(WIFI_CTRL, "CAFF qmgr_t %s:%d MAC %s DHCP attempts=%u failures=%u\n", __func__, __LINE__, mac_str, dhcp_attempts, dhcp_failures);
+    
+    // Convert MAC string to byte array
+    unsigned char mac[6];
+    if (sscanf(mac_str, "%hhx:%hhx:%hhx:%hhx:%hhx:%hhx",
+               &mac[0], &mac[1], &mac[2], &mac[3], &mac[4], &mac[5]) != 6) {
+        wifi_util_error_print(WIFI_CTRL, "CAFF qmgr_t %s:%d Failed to parse MAC: %s\n",
+            __func__, __LINE__, mac_str);
+        return -1;
+    }
+    
+    // Find or create caffinity_t object for this MAC using C++ unordered_map
+    std::string mac_key(mac_str);
+    auto it = m_caffinity_map.find(mac_key);
+    caffinity_t *caff = nullptr;
+    
+    if (it == m_caffinity_map.end()) {
+        wifi_util_info_print(WIFI_CTRL, "CAFF qmgr_t %s:%d Creating new caffinity_t for MAC %s\n",
+            __func__, __LINE__, mac_str);
+        // Create local array variable to pass its address to constructor
+        mac_addr_str_t mac_str_array;
+        strncpy(mac_str_array, mac_str, sizeof(mac_str_array) - 1);
+        mac_str_array[sizeof(mac_str_array) - 1] = '\0';
+        caff = new caffinity_t(&mac_str_array);
+        if (caff) {
+            m_caffinity_map[mac_key] = caff;
+        } else {
+            wifi_util_error_print(WIFI_CTRL, "CAFF qmgr_t %s:%d Failed to create caffinity_t\n",
+                __func__, __LINE__);
+            return -1;
+        }
+    } else {
+        caff = it->second;
+    }
+    
+    // Update DHCP stats
+    wifi_util_info_print(WIFI_CTRL, "CAFF qmgr_t %s:%d Calling caffinity_t::update_dhcp_stats\n",
+        __func__, __LINE__);
+    caff->update_dhcp_stats(mac, dhcp_attempts, dhcp_failures);
+    
     return 0;
 }
 
@@ -554,6 +657,7 @@ int qmgr_t::rapid_disconnect(stats_arg_t *stats)
     return 0;
 }
 
+
 // static helper function for pthread
 void* qmgr_t::run_helper(void* arg)
 {
@@ -628,6 +732,7 @@ qmgr_t::qmgr_t()
     snprintf(m_args.path, sizeof(m_args.path), "%s", "/www/data");
     m_link_map = hash_map_create();
     out_obj = cJSON_CreateObject();
+    affinity_obj = cJSON_CreateObject();
     m_bg_running = false;
     m_exit = false;
     pthread_mutex_init(&m_json_lock, NULL);
@@ -643,6 +748,7 @@ qmgr_t::qmgr_t(server_arg_t *args,stats_arg_t *stats)
     m_bg_running = false;
     m_link_map = hash_map_create();
     out_obj = cJSON_CreateObject();
+    affinity_obj = cJSON_CreateObject();
     pthread_mutex_init(&m_json_lock, NULL);
     pthread_mutex_init(&m_lock, NULL);
     pthread_cond_init(&m_cond, NULL);

@@ -249,3 +249,12 @@ int update_affinity_stats(affinity_arg_t *arg,bool flag)
     mgr->update_affinity_stats(arg,flag);
     return 0;
 }
+
+int update_dhcp_stats(mac_addr_str_t mac_str, uint32_t dhcp_attempts, uint32_t dhcp_failures)
+{
+    wifi_util_info_print(WIFI_APPS, "started %s:%d for MAC %s\n", __func__, __LINE__, mac_str);
+    qmgr_t *mgr;
+    mgr = qmgr_t::get_instance();   // always returns SAME instance
+    mgr->update_dhcp_stats(mac_str, dhcp_attempts, dhcp_failures);
+    return 0;
+}

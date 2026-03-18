@@ -48,6 +48,7 @@ public:
     caffinity_t(mac_addr_str_t *mac);
     ~caffinity_t();
     int update_affinity_stats(affinity_arg_t *arg);
+    int update_dhcp_stats(unsigned char *mac, uint32_t dhcp_attempts, uint32_t dhcp_failures);
     int score();
    
 };

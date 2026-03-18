@@ -593,7 +593,7 @@ bool check_for_greylisted_mac_filter(void)
     bool greylist_rfc = false;
     int vap_index = 0;
     wifi_vap_info_map_t *wifi_vap_map = NULL;
-
+    wifi_util_error_print(WIFI_CTRL," SANJI_DHCP %s:%d  \n", __func__, __LINE__);
     wifi_rfc_dml_parameters_t *rfc_info = (wifi_rfc_dml_parameters_t *)get_wifi_db_rfc_parameters();
     if (rfc_info) {
         greylist_rfc = rfc_info->radiusgreylist_rfc;
@@ -607,7 +607,9 @@ bool check_for_greylisted_mac_filter(void)
                     if (l_rdk_vap_array->acl_map != NULL) {
                         acl_entry = hash_map_get_first(l_rdk_vap_array->acl_map);
                         while(acl_entry != NULL) {
-                            if (acl_entry->mac != NULL && (acl_entry->reason == WLAN_RADIUS_GREYLIST_REJECT)) {
+                            wifi_util_error_print(WIFI_CTRL," SANJI %s:%d Insidewhile \n", __func__, __LINE__);
+                            if (acl_entry->mac[0] != '\0' && (acl_entry->reason == WLAN_RADIUS_GREYLIST_REJECT)) {
+                                wifi_util_error_print(WIFI_CTRL," SANJI %s:%d trururu \n", __func__, __LINE__);
                                 return true;
                             }
                             acl_entry = hash_map_get_next(l_rdk_vap_array->acl_map, acl_entry);
