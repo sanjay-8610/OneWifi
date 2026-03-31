@@ -900,7 +900,7 @@ bool get_notify_wifi_from_psm(char *PsmParamName)
     if (rc == bus_error_success) {
         strncpy(psm_notify_get, data.raw_data.bytes, (sizeof(psm_notify_get) - 1));
         wifi_util_dbg_print(WIFI_CTRL, " PSMDB value=%s\n", psm_notify_get);
-        if ((psm_notify_get != NULL) && (strcmp(psm_notify_get, "true") == 0)) {
+        if (strcmp(psm_notify_get, "true") == 0) {
             psm_notify_flag = true;
         } else {
             psm_notify_flag = false;
@@ -2002,8 +2002,8 @@ int wifi_sched_timeout(void *arg)
             handler_id = sched_id->wifi_acs_sched_handler_id;
             break;
         default:
-            free(args);
             wifi_util_error_print(WIFI_CTRL, "%s:%d: wifi index:%d invalid type:%d\n", __func__, __LINE__, args->index, args->type);
+            free(args);
             return TIMER_TASK_ERROR;
     }
 
@@ -2578,33 +2578,46 @@ wifi_vap_info_t* get_wifidb_vap_parameters(uint8_t vapIndex)
 int get_wifi_vap_network_status(uint8_t vapIndex, bool *status)
 {
     int ret;
-    wifi_vap_info_t vap_cfg;
+    int retval = RETURN_ERR;
+    wifi_vap_info_t *vap_cfg = NULL;
     rdk_wifi_vap_info_t rdk_vap_cfg;
     char vap_name[32];
     memset(vap_name, 0, sizeof(vap_name));
-    memset(&vap_cfg, 0, sizeof(vap_cfg));
+
+    vap_cfg = (wifi_vap_info_t *)malloc(sizeof(wifi_vap_info_t));
+    if (vap_cfg == NULL) {
+        wifi_util_error_print(WIFI_CTRL, "%s:%d: Failed to allocate memory\n", __func__, __LINE__);
+        return RETURN_ERR;
+    }
+    memset(vap_cfg, 0, sizeof(wifi_vap_info_t));
 
     ret = convert_vap_index_to_name(&((wifi_mgr_t *)get_wifimgr_obj())->hal_cap.wifi_prop, vapIndex, vap_name);
     if (ret != RETURN_OK) {
-        wifi_util_error_print(WIFI_CTRL, "%s:%d failure convert vap-index to name vapIndex:%d \n", __func__, __LINE__, vapIndex);
-        return RETURN_ERR;
+        wifi_util_error_print(WIFI_CTRL, "%s:%d: failure convert vap-index to name vapIndex:%d\n", __func__, __LINE__, vapIndex);
+        goto cleanup;
     }
-    ret = wifidb_get_wifi_vap_info(vap_name, &vap_cfg, &rdk_vap_cfg);
+    ret = wifidb_get_wifi_vap_info(vap_name, vap_cfg, &rdk_vap_cfg);
     if (ret != RETURN_OK) {
         wifi_util_dbg_print(WIFI_CTRL, "%s:%d wifiDb get vapInfo failure :vap_name:%s \n", __func__, __LINE__, vap_name);
         wifi_front_haul_bss_t *bss_param = Get_wifi_object_bss_parameter(vapIndex);
         if(bss_param != NULL) {
             *status = bss_param->enabled;
+            retval = RETURN_OK;
         } else {
             wifi_util_error_print(WIFI_CTRL, "%s:%d bss_param null for vapIndex:%d \n", __func__, __LINE__, vapIndex);
-            return RETURN_ERR;
         }
-        return RETURN_OK;
+        goto cleanup;
     }
-    *status = vap_cfg.u.bss_info.enabled;
+    *status = vap_cfg->u.bss_info.enabled;
     wifi_util_dbg_print(WIFI_CTRL, "%s:%d vap_info: vap_name:%s vap_index:%d, bss_status:%d\n", __func__, __LINE__, vap_name, vapIndex, *status);
+    retval = RETURN_OK;
 
-    return RETURN_OK;
+cleanup:
+    if (vap_cfg != NULL) {
+        free(vap_cfg);
+        vap_cfg = NULL;
+    }
+    return retval;
 }
 
 int get_wifi_mesh_sta_network_status(uint8_t vapIndex, bool *status)
@@ -3211,7 +3224,7 @@ CHAR* getVAPName(UINT apIndex)
         for (vapArrayIndex = 0; vapArrayIndex < getNumberVAPsPerRadio(radioIndex); vapArrayIndex++) {
             if (apIndex == wifi_mgr->radio_config[radioIndex].vaps.vap_map.vap_array[vapArrayIndex].vap_index) {
                 //wifi_util_dbg_print(WIFI_CTRL, "%s Input apIndex = %d  found at radioIndex = %d vapArrayIndex = %d\n ", __FUNCTION__, apIndex, radioIndex, vapArrayIndex);
-                if((wifi_mgr->radio_config[radioIndex].vaps.rdk_vap_array[vapArrayIndex].vap_name != NULL) && (strlen((CHAR *)wifi_mgr->radio_config[radioIndex].vaps.rdk_vap_array[vapArrayIndex].vap_name) != 0)) {
+                if (strlen((CHAR *)wifi_mgr->radio_config[radioIndex].vaps.rdk_vap_array[vapArrayIndex].vap_name) != 0) {
                     return (CHAR *)wifi_mgr->radio_config[radioIndex].vaps.rdk_vap_array[vapArrayIndex].vap_name;
                 } else {
                     return unused;

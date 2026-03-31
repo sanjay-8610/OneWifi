@@ -1831,7 +1831,7 @@ void process_wifi_host_sync()
                 continue;
             }
 
-            if (hosts.count > LM_MAX_HOSTS_NUM) {
+            if (hosts.count >= LM_MAX_HOSTS_NUM) {
                 wifi_util_info_print(WIFI_CTRL, "%s:%d has reached LM_MAX_HOSTS_NUM\n", __func__, __LINE__);
                 break;
             }
@@ -2396,6 +2396,11 @@ void process_wpa3_rfc(bool type)
     for(UINT rIdx = 0; rIdx < getNumberRadios(); rIdx++) {
         apIndex = getPrivateApFromRadioIndex(rIdx);
         vapInfo =  get_wifidb_vap_parameters(apIndex);
+        if (vapInfo == NULL) {
+            wifi_util_error_print(WIFI_CTRL, "%s:%d Invalid VAP for rIndx %u apIndx %u\n",
+            __func__, __LINE__, rIdx, apIndex);
+            continue;
+        }
         radio_params = (wifi_radio_operationParam_t *)get_wifidb_radio_map(rIdx);
 
         if ((svc = get_svc_by_name(ctrl, vapInfo->vap_name)) == NULL) {
@@ -2991,7 +2996,8 @@ int dfs_nop_start_timer(void *args)
 
     radarDetected_temp[sizeof(radarDetected_temp) - 1] = '\0';
 
-    if( !strcmp(radarDetected_temp, " ") || radarDetected_temp == NULL ) {
+    if (!strcmp(radarDetected_temp, " ") )
+    {
         wifi_util_error_print(WIFI_CTRL, "%s:%d No radar detected \n", __func__, __LINE__);
         return RETURN_ERR;
     }
@@ -3037,7 +3043,7 @@ int dfs_nop_start_timer(void *args)
         radio_channel_param.channelWidth = dfs_radar_ch_bw;
         radio_channel_param.op_class = radio_params->operatingClass;
 
-        dfs_timer_secs = ((time_now - radar_detected_time)<(radio_params->DFSTimer * 60) && (time_now > radar_detected_time)) ? ( (radio_params->DFSTimer * 60) - (time_now - radar_detected_time)) : 0;
+        dfs_timer_secs = ((time_now - radar_detected_time) < ((long long)radio_params->DFSTimer * 60) && (time_now > radar_detected_time)) ? (((long long)radio_params->DFSTimer * 60) - (time_now - radar_detected_time)) : 0;
         if(dfs_timer_secs == 0) {
             update_db_radar_detected(radar_detected_ch_time);
             update_wifi_radio_config(RADIO_INDEX_DFS, radio_params, radio_feat);
@@ -3514,22 +3520,32 @@ int wifidb_vap_status_update(bool status)
 {
     wifi_vap_name_t backhauls[MAX_NUM_RADIOS];
     int count;
-    wifi_vap_info_t vap_config;
+    wifi_vap_info_t *vap_config = NULL;
     rdk_wifi_vap_info_t rdk_vap_config;
-    memset(&vap_config, 0, sizeof(vap_config));
+    
+    vap_config = (wifi_vap_info_t *)malloc(sizeof(wifi_vap_info_t));
+    if (vap_config == NULL) 
+    {
+        wifi_util_error_print(WIFI_CTRL, "%s:%d Failed to allocate memory\n", __func__, __LINE__);
+        return RETURN_ERR;
+    }
+    
+    memset(vap_config, 0, sizeof(wifi_vap_info_t));
     memset(&rdk_vap_config, 0, sizeof(rdk_vap_config));
 
     /* get a list of mesh backhaul names of all radios */
     count = get_list_of_mesh_backhaul(&((wifi_mgr_t *)get_wifimgr_obj())->hal_cap.wifi_prop, sizeof(backhauls)/sizeof(wifi_vap_name_t), backhauls);
 
     for (int i = 0; i < count; i++) {
-        if (get_wifidb_obj()->desc.get_wifi_vpa_info_fn(&backhauls[i][0], &vap_config, &rdk_vap_config) == RETURN_OK) {
-            vap_config.u.bss_info.enabled = status;
+        if (get_wifidb_obj()->desc.get_wifi_vpa_info_fn(&backhauls[i][0], vap_config, &rdk_vap_config) == RETURN_OK) {
+            vap_config->u.bss_info.enabled = status;
             wifi_util_dbg_print(WIFI_CTRL, "%s:%d: wifi mesh backhaul status save:%d\n", __func__, __LINE__, status);
-            update_wifi_vap_info(&backhauls[i][0], &vap_config, &rdk_vap_config);
+            update_wifi_vap_info(&backhauls[i][0], vap_config, &rdk_vap_config);
         }
     }
 
+    free(vap_config);
+    vap_config = NULL;
     return RETURN_OK;
 }
 
@@ -3659,6 +3675,11 @@ void process_rsn_override_rfc(bool type)
     for(UINT rIdx = 0; rIdx < getNumberRadios(); rIdx++) {
         apIndex = getPrivateApFromRadioIndex(rIdx);
         vapInfo =  get_wifidb_vap_parameters(apIndex);
+        if (vapInfo == NULL) {
+            wifi_util_error_print(WIFI_CTRL, "%s:%d Invalid VAP for rIndx %u apIndx %u\n",
+                __func__, __LINE__, rIdx, apIndex);
+            continue;
+        }
         radio_params = (wifi_radio_operationParam_t *)get_wifidb_radio_map(rIdx);
 
         if ((svc = get_svc_by_name(ctrl, vapInfo->vap_name)) == NULL) {
@@ -3675,7 +3696,8 @@ void process_rsn_override_rfc(bool type)
         memset(new_sec_mode, 0, sizeof(new_sec_mode));
         ret = convert_sec_mode_enable_int_str(vapInfo->u.bss_info.security.mode, old_sec_mode);
         if(ret != RETURN_OK) {
-            wifi_util_error_print(WIFI_CTRL, "%s:%d: Error converting security mode to string old_mode:%d new_mode\n", __func__, __LINE__);
+            wifi_util_error_print(WIFI_CTRL, "%s:%d: Error converting security mode to string for mode %d\n",
+                __func__, __LINE__, vapInfo->u.bss_info.security.mode);
         }
 
         if(type) {
