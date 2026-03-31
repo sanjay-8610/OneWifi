@@ -477,7 +477,7 @@ int webconfig_bus_apply(wifi_ctrl_t *ctrl, webconfig_subdoc_encoded_data_t *data
     rdata.data_type = bus_data_type_string;
     rdata.raw_data.bytes = (void *)data->raw;
 
-    wifi_util_dbg_print(WIFI_CTRL, "%s:%d:bus_event_publish_fn WIFI_WEBCONFIG_DOC_DATA_NORTH initiated %d\n", __func__,
+    wifi_util_dbg_print(WIFI_CTRL, "%s:%d:bus_event_publish_fn WIFI_WEBCONFIG_DOC_DATA_NORTH initiated\n", __func__,
             __LINE__);
 
     rc = get_bus_descriptor()->bus_event_publish_fn(&ctrl->handle, WIFI_WEBCONFIG_DOC_DATA_NORTH,
@@ -600,7 +600,12 @@ bus_error_t webconfig_init_data_get_subdoc(char *event_name, raw_data_t *p_data,
             sizeof(wifi_hal_capability_t));
         data->u.decoded.num_radios = num_of_radios;
         // tell webconfig to encode
-	    webconfig_encode(&ctrl->webconfig, data, webconfig_subdoc_type_dml);
+	if (webconfig_encode(&ctrl->webconfig, data, webconfig_subdoc_type_dml) != webconfig_error_none) {
+	        wifi_util_error_print(WIFI_CTRL, "%s:%d webconfig encode failed\n", __func__, __LINE__);
+	        free(data);
+	        data = NULL;
+	        return bus_error_general;
+	    }
 
         uint32_t str_size = (strlen(data->u.encoded.raw) + 1);
         p_data->data_type = bus_data_type_string;
@@ -633,9 +638,19 @@ bus_error_t webconfig_init_data_get_subdoc(char *event_name, raw_data_t *p_data,
 	if (ctrl->dev_type != dev_subtype_pod) {
 		memcpy((unsigned char *)&data->u.decoded.config, (unsigned char *)&mgr->global_config,
 				sizeof(wifi_global_config_t));
-		webconfig_encode(&ctrl->webconfig, data, webconfig_subdoc_type_dml);
+		if (webconfig_encode(&ctrl->webconfig, data, webconfig_subdoc_type_dml) != webconfig_error_none) {
+	        wifi_util_error_print(WIFI_CTRL, "%s:%d webconfig encode failed\n", __func__, __LINE__);
+	        free(data);
+	        data = NULL;
+	        return bus_error_general;
+	    }
 	} else {
-		webconfig_encode(&ctrl->webconfig, data, webconfig_subdoc_type_mesh_sta);
+            if (webconfig_encode(&ctrl->webconfig, data, webconfig_subdoc_type_dml) != webconfig_error_none) {
+	        wifi_util_error_print(WIFI_CTRL, "%s:%d webconfig encode failed\n", __func__, __LINE__);
+	        free(data);
+	        data = NULL;
+	        return bus_error_general;
+	    }
 	}
 
         uint32_t str_size = (strlen(data->u.encoded.raw) + 1);
@@ -944,7 +959,11 @@ bus_error_t get_assoc_clients_data(char *event_name, raw_data_t *p_data, bus_use
 
     data->u.decoded.num_radios = getNumberRadios();
     data->u.decoded.assoclist_notifier_type = assoclist_notifier_full;
-    webconfig_encode(&ctrl->webconfig, data, webconfig_subdoc_type_associated_clients);
+    if (webconfig_encode(&ctrl->webconfig, data, webconfig_subdoc_type_associated_clients) != webconfig_error_none) {
+        webconfig_data_free(data);
+        free(data);
+        return bus_error_general;
+    }
 
     uint32_t str_size = strlen(data->u.encoded.raw) + 1;
     p_data->data_type = bus_data_type_string;
@@ -996,7 +1015,11 @@ bus_error_t get_null_subdoc_data(char *name, raw_data_t *p_data, bus_user_data_t
         sizeof(wifi_hal_capability_t));
 
     data->u.decoded.num_radios = getNumberRadios();
-    webconfig_encode(&ctrl->webconfig, data, webconfig_subdoc_type_null);
+    if (webconfig_encode(&ctrl->webconfig, data, webconfig_subdoc_type_null) != webconfig_error_none) {
+        webconfig_data_free(data);
+        free(data);
+        return bus_error_general;
+    }
 
     uint32_t str_size = strlen(data->u.encoded.raw) + 1;
     p_data->data_type = bus_data_type_string;
@@ -1206,7 +1229,11 @@ char *get_assoc_devices_blob()
     pdata->u.decoded.num_radios = getNumberRadios();
     pdata->u.decoded.assoclist_notifier_type = assoclist_notifier_full;
 
-    webconfig_encode(&ctrl->webconfig, pdata, webconfig_subdoc_type_associated_clients);
+    if (webconfig_encode(&ctrl->webconfig, pdata, webconfig_subdoc_type_associated_clients) != webconfig_error_none) {
+        webconfig_data_free(pdata);
+        free(pdata);
+        return NULL;
+    }
 
     size_t len = strlen(pdata->u.encoded.raw);
     str = (char *)calloc(len + 1, sizeof(char));
@@ -1560,7 +1587,7 @@ static int eth_bh_status_notify()
     rc = get_bus_descriptor()->bus_data_get_fn(&ctrl->handle, ETH_BH_STATUS, &data);
     if (data.data_type != bus_data_type_boolean) {
         wifi_util_error_print(WIFI_CTRL,
-            "%s:%d '%s' bus_data_get_fn failed with data_type:0x%x, rc:%\n", __func__, __LINE__,
+            "%s:%d '%s' bus_data_get_fn failed with data_type:0x%x, rc:%d\n", __func__, __LINE__,
             LAST_REBOOT_REASON_NAMESPACE, data.data_type, rc);
         return rc;
     }
