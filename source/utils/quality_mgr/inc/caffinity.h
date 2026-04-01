@@ -25,6 +25,10 @@
 #include "collection.h"
 #include "linkq.h"
 #include "run_qmgr.h"
+#include <algorithm>
+#include <string>
+
+using ap_mac_str_t = std::string;
 
 // Result structure returned by run_algorithm_caffinity
 typedef struct {
@@ -37,6 +41,7 @@ class caffinity_t
 {
     pthread_mutex_t m_lock;
     mac_addr_str_t m_mac;
+    std::vector<ap_mac_str_t> m_ap_mac;
     unsigned int m_auth_failures;
     unsigned int m_auth_attempts;
     unsigned int m_assoc_failures;

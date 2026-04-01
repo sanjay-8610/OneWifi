@@ -53,6 +53,7 @@ typedef struct {
 
 typedef struct {
     mac_addr_str_t mac_str;
+    mac_addr_str_t ap_mac_str;
     unsigned int vap_index;
     unsigned int radio_index;
     int channel_utilization;

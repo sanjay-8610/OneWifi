@@ -152,6 +152,16 @@ int caffinity_t::update_affinity_stats(stats_arg_t *arg)
                 wifi_util_info_print(WIFI_CTRL, "caffinity CAFF %s:%d ASSOC/REASSOC response SUCCESS (status=%u), m_connected=true, connected_time=%ld.%09ld\n",
                     __func__, __LINE__, arg->status_code,
                     (long)m_connected_time.tv_sec, m_connected_time.tv_nsec);
+
+                wifi_util_info_print(WIFI_CTRL, "%s:%d check in vector %s\n", __func__, __LINE__, arg->ap_mac_str);
+                if (std::find(m_ap_mac.begin(), m_ap_mac.end(), arg->ap_mac_str) == m_ap_mac.end()) {
+                    wifi_util_info_print(WIFI_CTRL, "%s:%d push_back\n", __func__, __LINE__);
+                    m_ap_mac.push_back(arg->ap_mac_str);
+                }
+
+                for (size_t i = 0; i < m_ap_mac.size(); ++i) {
+                    wifi_util_info_print(WIFI_CTRL, "%s:%d: %d: AP MAC %s\n", __func__, __LINE__, i, m_ap_mac[i].c_str());
+                }
             }
             break;
 
