@@ -35,6 +35,9 @@
 #include <sys/socket.h>
 #include <arpa/inet.h>
 #include <pthread.h>
+#include <pcap/pcap.h>
+#include <linux/filter.h>
+#include <linux/if_ether.h>
 #include "wifi_hal.h"
 #include "wifi_base.h"
 #include "wifi_ctrl.h"
@@ -408,6 +411,47 @@ static void *dhcp_sniffer_thread_func(void *arg)
     return NULL;
 }
 
+static int attach_kernel_bpf_filter(int sock)
+{
+    const char *filter_expr =
+        "ether proto 0x893a "
+        "or (ether proto 0x0800 and udp and (port 67 or port 68)) "
+        "or (ether proto 0x86dd and udp and (port 546 or port 547))";
+
+    struct bpf_program prog;
+    struct sock_fprog fprog;
+
+    pcap_t *pcap = pcap_open_dead(DLT_EN10MB, 2048);
+    if (!pcap) {
+        wifi_util_info_print(WIFI_APPS, "%s:%d: pcap_open_dead failed\n", __func__, __LINE__);
+        return -1;
+    }
+
+    if (pcap_compile(pcap, &prog, filter_expr, 1,
+                     PCAP_NETMASK_UNKNOWN) < 0) {
+        wifi_util_info_print(WIFI_APPS, "%s:%d: pcap_compile failed: %s\n", __func__, __LINE__,
+                pcap_geterr(pcap));
+        pcap_close(pcap);
+        return -1;
+    }
+
+    fprog.len = prog.bf_len;
+    fprog.filter = (struct sock_filter *)prog.bf_insns;
+
+    if (setsockopt(sock, SOL_SOCKET, SO_ATTACH_FILTER,
+                   &fprog, sizeof(fprog)) < 0) {
+        wifi_util_info_print(WIFI_APPS, "%s:%d: SO_ATTACH_FILTER failed: %s\n", __func__, __LINE__, strerror(errno));
+        pcap_freecode(&prog);
+        pcap_close(pcap);
+        return -1;
+    }
+
+    pcap_freecode(&prog);
+    pcap_close(pcap);
+
+    return 0;
+}
+
 static void dhcp_sniffer_start()
 {
     struct sockaddr_ll sll;
@@ -427,6 +471,12 @@ static void dhcp_sniffer_start()
     dhcp_sniffer_fd = socket(AF_PACKET, SOCK_RAW, htons(ETH_P_ALL));
     if (dhcp_sniffer_fd < 0) {
         wifi_util_error_print(WIFI_CTRL, " SANJI %s:%d Failed to create socket: %s\n", __func__, __LINE__, strerror(errno));
+        return;
+    }
+
+    if (attach_kernel_bpf_filter(dhcp_sniffer_fd) < 0) {
+        wifi_util_error_print(WIFI_CTRL, "%s:%d Failed to attach BPF filter\n", __func__, __LINE__);
+        close(dhcp_sniffer_fd);
         return;
     }
 
