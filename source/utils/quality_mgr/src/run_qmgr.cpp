@@ -258,6 +258,14 @@ int periodic_caffinity_stats_update(stats_arg_t *stats,int len)
     qmgr_t *mgr;
     mgr = qmgr_t::get_instance();   // always returns SAME instance
     for (int i =0;i<len;i++) {
+        wifi_util_error_print(WIFI_APPS,
+            "TIMERS run_qmgr %s:%d [%d] mac=%s sizeof(stats_arg_t)=%zu "
+            "connected=%ld.%09ld disconnected=%ld.%09ld\n",
+            __func__, __LINE__, i, stats[i].mac_str, sizeof(stats_arg_t),
+            (long)stats[i].total_connected_time.tv_sec,
+            stats[i].total_connected_time.tv_nsec,
+            (long)stats[i].total_disconnected_time.tv_sec,
+            stats[i].total_disconnected_time.tv_nsec);
         mgr->caffinity_periodic_stats_update(&stats[i]);
     }
     return 0;

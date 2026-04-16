@@ -55,7 +55,7 @@ static int periodic_caffinity_stats_update_ext(stats_arg_t *stats, int len)
     int frame_len = 0;
     uint8_t g_gw_mac[6] = {0};
     get_gw_mac(g_gw_mac);
-    if (!is_zero_mac(g_gw_mac))  {   
+    if (is_zero_mac(g_gw_mac))  {   
 	wifi_util_error_print(WIFI_APPS, " SOCKET %s:%d GW MAC not yet learned, skipping periodic_caffinity\n",
          __func__, __LINE__);
         return 0;
@@ -100,7 +100,7 @@ static int disconnect_link_stats_ext(stats_arg_t *stats)
     int frame_len = 0;
     uint8_t g_gw_mac[6] = {0};
     get_gw_mac(g_gw_mac);
-    if (!is_zero_mac(g_gw_mac))  {   
+    if (is_zero_mac(g_gw_mac))  {   
         wifi_util_error_print(WIFI_APPS, " SOCKET %s:%d GW MAC not yet learned, skipping disconnect_link_stats\n",
          __func__, __LINE__);
         return 0;
@@ -126,7 +126,7 @@ static int remove_link_stats_ext(stats_arg_t *stats)
     int frame_len = 0;
     uint8_t g_gw_mac[6] = {0};
     get_gw_mac(g_gw_mac);
-    if (!is_zero_mac(g_gw_mac))  {   
+    if (is_zero_mac(g_gw_mac))  {   
         wifi_util_error_print(WIFI_APPS, " SOCKET %s:%d GW MAC not yet learned, skipping remove_link_stats\n",
          __func__, __LINE__);
         return 0;
@@ -138,20 +138,52 @@ static int remove_link_stats_ext(stats_arg_t *stats)
 //Unified extender dispatcher: fills ext_event_type via send_qmgr_data_to_gateway
 static int process_lq_stats_ext(stats_arg_t *stats, int len)
 {
-    unsigned char msg[MAX_EM_BUFF_SZ];
+    /* Dynamically size the buffer: header + searched_role TLV (5B) +
+     * lq TLV header (3B) + payload + EOM TLV (3B).
+     * This avoids stack overflow when len is large (> 7 clients on 32-bit). */
+    size_t frame_size = sizeof(multiap_raw_hdr_t) + sizeof(multiap_cmdu_t)
+                        + 5                                  /* searched_role TLV */
+                        + sizeof(multiap_tlv_t)              /* lq TLV header   */
+                        + (size_t)len * sizeof(stats_arg_t)  /* lq TLV payload  */
+                        + sizeof(multiap_tlv_t);             /* EOM TLV         */
+    unsigned char *msg = (unsigned char *)malloc(frame_size);
+    if (!msg) {
+        wifi_util_error_print(WIFI_APPS, " SOCKET %s:%d malloc failed for frame_size=%zu\n",
+            __func__, __LINE__, frame_size);
+        return -1;
+    }
+
     /* EXT(XB8): backhaul interface is brlan0; for RPI extender: change to "eth0" */
     char *ifname = "brlan0";
     int frame_len = 0;
     wifi_util_dbg_print(WIFI_APPS, " SOCKET %s:%d len=%d \n", __func__, __LINE__, len);
+
+    /* TIMERS: log what EXT is about to pack into the 1905 frame */
+    wifi_util_error_print(WIFI_APPS,
+        "TIMERS process_ext %s:%d sizeof(stats_arg_t)=%zu len=%d\n",
+        __func__, __LINE__, sizeof(stats_arg_t), len);
+    for (int _t = 0; _t < len; _t++) {
+        wifi_util_error_print(WIFI_APPS,
+            "TIMERS process_ext %s:%d [%d] mac=%s "
+            "connected=%ld.%09ld disconnected=%ld.%09ld\n",
+            __func__, __LINE__, _t, stats[_t].mac_str,
+            (long)stats[_t].total_connected_time.tv_sec,
+            stats[_t].total_connected_time.tv_nsec,
+            (long)stats[_t].total_disconnected_time.tv_sec,
+            stats[_t].total_disconnected_time.tv_nsec);
+    }
+
     uint8_t g_gw_mac[6] = {0};
     get_gw_mac(g_gw_mac);
-    if (!is_zero_mac(g_gw_mac))  {   
+    if (is_zero_mac(g_gw_mac))  {   
         wifi_util_error_print(WIFI_APPS, " SOCKET %s:%d GW MAC not yet learned, skipping process_lq_stats\n",
           __func__, __LINE__);
+        free(msg);
         return 0;
     }
     frame_len = create_autoconfig_resp_msg(msg, g_gw_mac, ifname, stats, len, ext_qualitymgr_lq_affinity);
     send_frame(msg, frame_len, false, ifname);
+    free(msg);
     return 0;
 }
 //This function is not needed in extender this is specific to the Gateway
@@ -366,6 +398,21 @@ int create_autoconfig_resp_msg(unsigned char *buff, unsigned char *dst, char *in
 
     memcpy(tlv->value, stats, payload_len);
 
+    /* TIMERS: confirm what was packed into the lq TLV */
+    wifi_util_error_print(WIFI_APPS,
+        "TIMERS create_msg %s:%d sizeof(stats_arg_t)=%zu num_devs=%d payload_len=%d\n",
+        __func__, __LINE__, sizeof(stats_arg_t), num_devs, payload_len);
+    for (int _t = 0; _t < num_devs; _t++) {
+        wifi_util_error_print(WIFI_APPS,
+            "TIMERS create_msg %s:%d [%d] mac=%s "
+            "connected=%ld.%09ld disconnected=%ld.%09ld\n",
+            __func__, __LINE__, _t, stats[_t].mac_str,
+            (long)stats[_t].total_connected_time.tv_sec,
+            stats[_t].total_connected_time.tv_nsec,
+            (long)stats[_t].total_disconnected_time.tv_sec,
+            stats[_t].total_disconnected_time.tv_nsec);
+    }
+
     tmp += sizeof(multiap_tlv_t) + payload_len;
     len += sizeof(multiap_tlv_t) + payload_len;
     
@@ -442,12 +489,12 @@ void* run_extender_1905_thread(void *arg)
         }
 
         memcpy(g_gw_mac, raw->src, sizeof(mac_address_t));
-	store_gw_mac(g_gw_mac);
+	    store_gw_mac(g_gw_mac);
         uint8_mac_to_string_mac(g_gw_mac, gw_mac_str);
         wifi_util_info_print(WIFI_APPS,
-            " 1905 EXT %s:%d received autoconf_search — stored GW MAC: %s\n",
+            " 1905 EXT %s:%d received autoconf_search — updated GW MAC: %s\n",
             __func__, __LINE__, gw_mac_str);
-        break;
+	//break; can be enabled based on final call, for testing purpose lets update the MAC for every req
     }
 
     close(sock);
@@ -540,6 +587,16 @@ void lq_handle_1905_frame(const uint8_t *buf, ssize_t len)
         } else if (tlv->type == multiap_tlv_type_lq) {
             int payload_len = (int)ntohs(tlv->len);
             count = payload_len / (int)sizeof(stats_arg_t);
+
+            /* TIMERS: log struct size and derived count on GW side — compare with EXT side
+             * to detect 32-bit vs 64-bit struct layout mismatch */
+            wifi_util_error_print(WIFI_APPS,
+                "TIMERS handle_frame %s:%d sizeof(stats_arg_t)=%zu "
+                "payload_len=%d count=%d (payload_rem=%d)\n",
+                __func__, __LINE__, sizeof(stats_arg_t),
+                payload_len, count,
+                payload_len % (int)sizeof(stats_arg_t));
+
             if (count <= 0 || count > 256) {
                 wifi_util_error_print(WIFI_APPS,
                     " 1905 GW %s:%d invalid count=%d in lq TLV\n",
@@ -554,6 +611,19 @@ void lq_handle_1905_frame(const uint8_t *buf, ssize_t len)
                 return;
             }
             memcpy(lq_buf, tlv->value, (size_t)payload_len);
+
+            /* TIMERS: what GW reads back from the copied payload */
+            for (int _t = 0; _t < count; _t++) {
+                wifi_util_error_print(WIFI_APPS,
+                    "TIMERS handle_frame %s:%d [%d] mac=%s "
+                    "connected=%ld.%09ld disconnected=%ld.%09ld\n",
+                    __func__, __LINE__, _t, lq_buf[_t].mac_str,
+                    (long)lq_buf[_t].total_connected_time.tv_sec,
+                    lq_buf[_t].total_connected_time.tv_nsec,
+                    (long)lq_buf[_t].total_disconnected_time.tv_sec,
+                    lq_buf[_t].total_disconnected_time.tv_nsec);
+            }
+
             ptr += sizeof(multiap_tlv_t) + payload_len;
 
         } else if (tlv->type == multiap_tlv_type_eom) {

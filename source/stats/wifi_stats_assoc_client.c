@@ -427,6 +427,14 @@ int execute_assoc_client_stats_api(wifi_mon_collector_element_t *c_elem, wifi_mo
             if (link_data && i < num_devs && ((link_quality_measurement) || (rf_down_mesh_sta))) {
                 link_data[i].stats.total_connected_time = sta->total_connected_time;
                 link_data[i].stats.total_disconnected_time = sta->total_disconnected_time;
+                wifi_util_error_print(WIFI_MON,
+                    "TIMERS assoc_client %s:%d [%d] mac=%s "
+                    "connected_time=%ld.%09ld disconnected_time=%ld.%09ld\n",
+                    __func__, __LINE__, i, link_data[i].stats.mac_str,
+                    (long)link_data[i].stats.total_connected_time.tv_sec,
+                    link_data[i].stats.total_connected_time.tv_nsec,
+                    (long)link_data[i].stats.total_disconnected_time.tv_sec,
+                    link_data[i].stats.total_disconnected_time.tv_nsec);
             }
 
             wifi_util_dbg_print(WIFI_MON,

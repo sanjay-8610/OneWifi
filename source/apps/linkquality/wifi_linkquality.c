@@ -412,6 +412,7 @@ static void *sniffer_thread_func(void *arg)
     return NULL;
 }
 
+#if 0
 static int attach_kernel_bpf_filter(int sock)
 {
     const char *filter_expr =
@@ -452,6 +453,7 @@ static int attach_kernel_bpf_filter(int sock)
 
     return 0;
 }
+#endif
 
 void dhcp_sniffer_start()
 {
@@ -475,18 +477,18 @@ void dhcp_sniffer_start()
         return;
     }
 
-    if (attach_kernel_bpf_filter(dhcp_sniffer_fd) < 0) {
+    /*if (attach_kernel_bpf_filter(dhcp_sniffer_fd) < 0) {
         wifi_util_error_print(WIFI_CTRL, "%s:%d Failed to attach BPF filter\n", __func__, __LINE__);
         close(dhcp_sniffer_fd);
         return;
-    }
+    }*/
 
     /* GW(RPI): backhaul to XB8 is eth0 — receives both DHCP and 1905 frames from XB8.
      * For production GW (LAN-side clients): change to "brlan0". */
     // Bind to backhaul interface
     memset(&sll, 0, sizeof(sll));
     memset(&ifr, 0, sizeof(ifr));
-    strncpy(ifr.ifr_name, "eth0", IFNAMSIZ - 1);
+    strncpy(ifr.ifr_name, "brlan0", IFNAMSIZ - 1);
     
     if (ioctl(dhcp_sniffer_fd, SIOCGIFINDEX, &ifr) < 0) {
         wifi_util_error_print(WIFI_CTRL, "%s:%d Failed to get interface index: %s\n", __func__, __LINE__, strerror(errno));
@@ -813,7 +815,7 @@ int link_quality_gw_discovery(wifi_app_t *apps, wifi_event_t *arg)
     /* GW: broadcast autoconf_search so EXT learns our MAC and can address
      * subsequent autoconf_resp frames to us.
      * GW(RPI): backhaul to XB8 = eth0; for production GW: change to "brlan0". */
-     lq_send_autoconf_search("eth0");
+     lq_send_autoconf_search("brlan0");
 
     return RETURN_OK;
 
