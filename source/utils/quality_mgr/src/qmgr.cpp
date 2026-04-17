@@ -442,6 +442,7 @@ void qmgr_t::update_graph( cJSON *out_obj)
     pthread_mutex_unlock(&m_json_lock);
     return ;
 }
+
 int qmgr_t::run()
 {
     int rc,count = 0;

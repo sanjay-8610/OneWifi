@@ -249,13 +249,13 @@ static void dhcp_process_packet(const uint8_t *buffer, ssize_t len)
     
     // Convert msg_type to string for logging
     switch(msg_type) {
-        case DHCPDISCOVER: msg_type_str = "DISCOVER"; break;
-        case DHCPOFFER:    msg_type_str = "OFFER"; break;
-        case DHCPREQUEST:  msg_type_str = "REQUEST"; break;
-        case DHCPDECLINE:  msg_type_str = "DECLINE"; break;
-        case DHCPACK:      msg_type_str = "ACK"; break;
-        case DHCPNAK:      msg_type_str = "NAK"; break;
-        default:           msg_type_str = "UNKNOWN"; break;
+        case DHCP_DISCOVER: msg_type_str = "DISCOVER"; break;
+        case DHCP_OFFER:    msg_type_str = "OFFER";    break;
+        case DHCP_REQUEST:  msg_type_str = "REQUEST";  break;
+        case DHCP_DECLINE:  msg_type_str = "DECLINE";  break;
+        case DHCP_ACK:      msg_type_str = "ACK";      break;
+        case DHCP_NAK:      msg_type_str = "NAK";      break;
+        default:            msg_type_str = "UNKNOWN";  break;
     }
 
     // ============================================================================
@@ -1206,7 +1206,7 @@ int exec_event_hal_ind(wifi_app_t *apps, wifi_event_subtype_t sub_type, void *ar
             break;
         case wifi_event_hal_reassoc_rsp_frame:
             wifi_util_info_print(WIFI_APPS," %s:%d event = %d\n",__func__,__LINE__,sub_type);
-            link_quality_apps_assoc_event(apps,true,sub_type,arg);
+            link_quality_apps_assoc_event(apps,false,sub_type,arg);
             break;
      
         case wifi_event_hal_sta_conn_status:
