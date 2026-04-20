@@ -91,10 +91,10 @@ public:
     cJSON *create_dev_template(mac_addr_str_t mac_str,unsigned int vap_index);
     static int set_max_snr_radios(radio_max_snr_t *max_snr_val);    
     void update_json(const char *str, vector_t v, cJSON *out_obj, bool &alarm);
-    void update_caffinity_json(const char *str, double caffinity_score);
     void update_caffinity_graph();
-    void update_rms_aggregate_json(double rms_connected, double rms_unconnected);
-    void update_rms_lq_aggregate_json(double rms_lq);
+    void update_rms_json(cJSON *root, const char *obj_key,
+                         const char *key1, double val1,
+                         const char *key2, double val2);
     void register_station_mac(const char* str);
     void unregister_station_mac(const char* str);
     static void destroy_instance();
@@ -106,6 +106,7 @@ public:
     bool is_client_connected(const char *mac_str);
     static int store_gw_mac(uint8_t *mac);
     static int get_gw_mac(uint8_t *mac);
+    void build_and_print_metrics_string(char *buf, int buf_len);
     ~qmgr_t();
 };
 

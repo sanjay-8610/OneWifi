@@ -509,28 +509,6 @@ export function renderCAffinityScoreCharts(data) {
     });
     return count ? sum / count : 0;
   });
-
-  if (!caffinityAggregateChartDiv) {
-    caffinityAggregateChartDiv = document.createElement('div');
-    caffinityAggregateChartDiv.style.height = '420px';
-    caffinityAggregateChartDiv.style.width = '100%';
-    aggregateDiv.appendChild(caffinityAggregateChartDiv);
-  }
-
-  Plotly.react(caffinityAggregateChartDiv, [{
-    x: timeAxis,
-    y: aggregateValues,
-    type: 'scatter',
-    mode: 'lines',
-    name: 'Aggregate',
-    line: { color: '#541e1e', width: 3 }
-  }], {
-    title: { text: '<b>Connection Affinity Score — Aggregate Score</b>', x: 0.5, xanchor: 'center' },
-    xaxis: { title: 'Time', tickangle: -45 },
-    yaxis: { title: 'Score', range: [0, 1], tick0: 0, dtick: 0.1 },
-    height: 420,
-    margin: { t: 80, l: 60, r: 60, b: 60 }
-  }, { responsive: true });
 }
 
 // --------------------
@@ -599,7 +577,7 @@ export function renderUnconnectedClientsCharts(data) {
   Plotly.react(unconnectedMultiChartDiv, barTraces, {
     title: { text: '<b>Unconnected Clients — Caffinity Scores</b>', x: 0.5, xanchor: 'center' },
     xaxis: { title: 'Time', tickangle: -45 },
-    yaxis: { title: 'Score', range: [0, 10], tick0: 0, dtick: 2 },
+    yaxis: { title: 'Score', range: [0, 1], tick0: 0, dtick: 0.1 },
     barmode: 'group',
     height: 420,
     margin: { t: 80, l: 60, r: 60, b: 80 }
@@ -617,28 +595,6 @@ export function renderUnconnectedClientsCharts(data) {
     });
     return count ? sum / count : 0;
   });
-
-  if (!unconnectedAggregateChartDiv) {
-    unconnectedAggregateChartDiv = document.createElement('div');
-    unconnectedAggregateChartDiv.style.height = '420px';
-    unconnectedAggregateChartDiv.style.width = '100%';
-    aggregateDiv.appendChild(unconnectedAggregateChartDiv);
-  }
-
-  Plotly.react(unconnectedAggregateChartDiv, [{
-    x: timeAxis,
-    y: aggregateValues,
-    type: 'scatter',
-    mode: 'lines',
-    name: 'Aggregate',
-    line: { color: '#712bd3', width: 3 }
-  }], {
-    title: { text: '<b>Unconnected Clients — Aggregate Caffinity Score</b>', x: 0.5, xanchor: 'center' },
-    xaxis: { title: 'Time', tickangle: -45 },
-    yaxis: { title: 'Score', range: [0, 50], tick0: 0, dtick: 2 },
-    height: 420,
-    margin: { t: 80, l: 60, r: 60, b: 60 }
-  }, { responsive: true });
 }
 
 // --------------------
@@ -684,7 +640,7 @@ export function renderRMSConnectedChart(data) {
   }], {
     title: { text: '<b>RMS Aggregate — Connected Clients</b>', x: 0.5, xanchor: 'center' },
     xaxis: { title: 'Time', tickangle: -45 },
-    yaxis: { title: 'RMS Score', range: [0, 50], tick0: 0, dtick: 2 },
+    yaxis: { title: 'RMS Score', range: [0, 1], tick0: 0, dtick: 0.1 },
     height: 420,
     margin: { t: 80, l: 60, r: 60, b: 60 }
   }, { responsive: true });
@@ -733,7 +689,7 @@ export function renderRMSUnconnectedChart(data) {
   }], {
     title: { text: '<b>RMS Aggregate — Unconnected Clients</b>', x: 0.5, xanchor: 'center' },
     xaxis: { title: 'Time', tickangle: -45 },
-    yaxis: { title: 'RMS Score', range: [0, 50], tick0: 0, dtick: 2 },
+    yaxis: { title: 'RMS Score', range: [0, 1], tick0: 0, dtick: 0.1 },
     height: 420,
     margin: { t: 80, l: 60, r: 60, b: 60 }
   }, { responsive: true });
@@ -782,7 +738,7 @@ export function renderRMSLinkQualityChart(data) {
   }], {
     title: { text: '<b>RMS Aggregate — Link Quality Score</b>', x: 0.5, xanchor: 'center' },
     xaxis: { title: 'Time', tickangle: -45 },
-    yaxis: { title: 'RMS Score', range: [0, 50], tick0: 0, dtick: 2 },
+    yaxis: { title: 'RMS Score', range: [0, 1], tick0: 0, dtick: 0.1 },
     height: 420,
     margin: { t: 80, l: 60, r: 60, b: 60 }
   }, { responsive: true });
