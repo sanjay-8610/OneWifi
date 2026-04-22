@@ -27,6 +27,7 @@
 #include "wifi_monitor.h"
 #include "wifi_webconfig.h"
 #include "run_qmgr.h"
+#include "lq_rbus_events.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdbool.h>
@@ -4246,6 +4247,28 @@ void bus_register_handlers(wifi_ctrl_t *ctrl)
                                 { WIFI_LINK_QUALITY_GW, bus_element_type_method,
                                     { NULL, set_linkq_gw, NULL, NULL, NULL, NULL }, slow_speed, ZERO_TABLE,
                                     { bus_data_type_boolean, false, 0, 0, 0, NULL } },
+                                /* linkquality rbus events: onewifi publishes, linkquality_stats subscribes */
+                                { LQ_RBUS_EVENT_PERIODIC_STATS, bus_element_type_event,
+                                    { NULL, NULL, NULL, NULL, eventSubHandler, NULL }, slow_speed, ZERO_TABLE,
+                                    { bus_data_type_bytes, false, 0, 0, 0, NULL } },
+                                { LQ_RBUS_EVENT_RAPID_DISCONNECT, bus_element_type_event,
+                                    { NULL, NULL, NULL, NULL, eventSubHandler, NULL }, slow_speed, ZERO_TABLE,
+                                    { bus_data_type_bytes, false, 0, 0, 0, NULL } },
+                                { LQ_RBUS_EVENT_REMOVE, bus_element_type_event,
+                                    { NULL, NULL, NULL, NULL, eventSubHandler, NULL }, slow_speed, ZERO_TABLE,
+                                    { bus_data_type_bytes, false, 0, 0, 0, NULL } },
+                                { LQ_RBUS_EVENT_HAL_INDICATION, bus_element_type_event,
+                                    { NULL, NULL, NULL, NULL, eventSubHandler, NULL }, slow_speed, ZERO_TABLE,
+                                    { bus_data_type_bytes, false, 0, 0, 0, NULL } },
+                                { LQ_RBUS_EVENT_START, bus_element_type_event,
+                                    { NULL, NULL, NULL, NULL, eventSubHandler, NULL }, slow_speed, ZERO_TABLE,
+                                    { bus_data_type_bytes, false, 0, 0, 0, NULL } },
+                                { LQ_RBUS_EVENT_STOP, bus_element_type_event,
+                                    { NULL, NULL, NULL, NULL, eventSubHandler, NULL }, slow_speed, ZERO_TABLE,
+                                    { bus_data_type_bytes, false, 0, 0, 0, NULL } },
+                                { LQ_RBUS_EVENT_GW_DISCOVERY, bus_element_type_event,
+                                    { NULL, NULL, NULL, NULL, eventSubHandler, NULL }, slow_speed, ZERO_TABLE,
+                                    { bus_data_type_bytes, false, 0, 0, 0, NULL } },
     };
 
     rc = get_bus_descriptor()->bus_open_fn(&ctrl->handle, component_name);

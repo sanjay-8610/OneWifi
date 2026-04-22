@@ -51,6 +51,7 @@
 #include "wifi_monitor.h"
 #include "scheduler.h"
 #include "common/ieee802_11_defs.h"
+#include "wifi_stats_lq_rbus_publish.h"
 
 
 int dhcp_sniffer_fd = -1;
@@ -712,58 +713,10 @@ int link_quality_event_exec_start(wifi_app_t *apps, void *arg)
 {
       
     wifi_util_info_print(WIFI_APPS, "%s:%d\n", __func__, __LINE__);
-    radio_max_snr_t max_snr = {0};
-    wifi_ctrl_t *ctrl = (wifi_ctrl_t *)get_wifictrl_obj();
-    
-    
-    wifi_rfc_dml_parameters_t *rfc_param = (wifi_rfc_dml_parameters_t *)get_ctrl_rfc_parameters();
-    if (rfc_param->link_quality_rfc) {
-          wifi_util_error_print(WIFI_CTRL,"%s:%d start link_event \n", __func__, __LINE__);
-    }
-    get_lq_descriptor()->start_link_metrics_fn();
 
+    /* Forward start event to linkquality_stats process via rbus */
+    lq_rbus_publish_start();
 
-    /* qmgr callbacks and max-SNR setup run on both GW and Extender */
-    if (ctrl->network_mode == rdk_dev_mode_type_em_node
-      || ctrl->network_mode == rdk_dev_mode_type_em_colocated_node) {
-        qmgr_register_batch_callback(publish_qmgr_subdoc);
-        wifi_util_info_print(WIFI_APPS, "%s:%d ctrl->network_mode=%d\n",
-            __func__, __LINE__, ctrl->network_mode);
-    }
-
-    if (rfc_param->radio_2g_observed_max_snr == 0 || rfc_param->radio_5g_observed_max_snr == 0 ||
-        rfc_param->radio_6g_observed_max_snr == 0) {
-        if (rfc_param->radio_2g_observed_max_snr == 0) {
-            max_snr.radio_2g_max_snr = 25;
-            rfc_param->radio_2g_observed_max_snr = 25;
-        } else {
-            max_snr.radio_2g_max_snr = rfc_param->radio_2g_observed_max_snr;
-        }
-        if (rfc_param->radio_5g_observed_max_snr == 0) {
-            max_snr.radio_5g_max_snr = 25;
-            rfc_param->radio_5g_observed_max_snr = 25;
-        } else {
-            max_snr.radio_5g_max_snr = rfc_param->radio_5g_observed_max_snr;
-        }
-        if (rfc_param->radio_6g_observed_max_snr == 0) {
-            max_snr.radio_6g_max_snr = 25;
-            rfc_param->radio_6g_observed_max_snr = 25;
-        } else {
-            max_snr.radio_6g_max_snr = rfc_param->radio_6g_observed_max_snr;
-        }
-        get_wifidb_obj()->desc.update_rfc_config_fn(0, rfc_param);
-        wifi_util_error_print(WIFI_CTRL, "%s:%d setting max_snr\n", __func__, __LINE__);
-    } else {
-        max_snr.radio_2g_max_snr = rfc_param->radio_2g_observed_max_snr;
-        max_snr.radio_5g_max_snr = rfc_param->radio_5g_observed_max_snr;
-        max_snr.radio_6g_max_snr = rfc_param->radio_6g_observed_max_snr;
-        wifi_util_error_print(WIFI_CTRL, "%s:%d setting max_snr\n", __func__, __LINE__);
-    }
-
-    wifi_util_info_print(WIFI_APPS, "%s:%d %d:%d:%d\n", __func__, __LINE__,
-        max_snr.radio_2g_max_snr, max_snr.radio_5g_max_snr, max_snr.radio_6g_max_snr);
-    set_max_snr_radios(&max_snr);
-    qmgr_register_max_snr_callback(update_radio_max_snr_observance);
     return RETURN_OK;
 }
 
@@ -771,17 +724,8 @@ int link_quality_event_exec_stop(wifi_app_t *apps, void *arg)
 {
     wifi_util_info_print(WIFI_APPS, "%s:%d\n", __func__, __LINE__);
 
-    get_lq_descriptor()->stop_link_metrics_fn();
-
-    ignite_lq_state_t *ignite = &apps->data.u.linkquality.ignite;
-    if (ignite->score_log_timer_id != 0) {
-        scheduler_cancel_timer_task(apps->ctrl->sched, ignite->score_log_timer_id);
-        ignite->score_log_timer_id = 0;
-        wifi_util_info_print(WIFI_APPS, "%s:%d: Cancelled ignite score log timer\n", __func__,
-            __LINE__);
-    }
-    ignite->last_service_state = -1;
-    ignite->iteration_count = 0;
+    /* Forward stop event to linkquality_stats process via rbus */
+    lq_rbus_publish_stop();
 
     return RETURN_OK;
 }
@@ -804,7 +748,8 @@ int link_quality_hal_rapid_connect(wifi_app_t *apps, void *arg)
         stats->dev.cli_LastDataDownlinkRate
     );
 
-     get_lq_descriptor()->disconnect_link_stats_fn(stats);
+    /* Forward rapid disconnect to linkquality_stats process via rbus */
+    lq_rbus_publish_rapid_disconnect(stats);
     return RETURN_OK;
 
 }
@@ -812,10 +757,9 @@ int link_quality_gw_discovery(wifi_app_t *apps, wifi_event_t *arg)
 {
     wifi_util_info_print(WIFI_APPS, "%s:%d \n",
         __func__, __LINE__);
-    /* GW: broadcast autoconf_search so EXT learns our MAC and can address
-     * subsequent autoconf_resp frames to us.
-     * GW(RPI): backhaul to XB8 = eth0; for production GW: change to "brlan0". */
-     lq_send_autoconf_search("brlan0");
+
+    /* Forward GW discovery event to linkquality_stats process via rbus */
+    lq_rbus_publish_gw_discovery();
 
     return RETURN_OK;
 
@@ -914,30 +858,8 @@ int link_quality_hal_disconnect(wifi_app_t *apps, void *arg)
          stats->dev.cli_LastDataDownlinkRate
     );      
  
-     get_lq_descriptor()->remove_link_stats_fn(stats);
-    return RETURN_OK;
-             
- } 
-
-int link_quality_ignite_param_reinit(wifi_app_t *apps, wifi_event_t *arg)
-{
-    if (!arg) {
-        wifi_util_error_print(WIFI_CTRL, "%s:%d NULL arg\n", __func__, __LINE__);
-        return RETURN_ERR;
-    }
-
-    linkquality_data_t *data = (linkquality_data_t *)arg;
-
-     server_arg_t *server_arg = &data->server_arg;
-        wifi_util_dbg_print(
-            WIFI_APPS,
-            "%s:%d  threshold=%f reporting=%d\n",
-            __func__, __LINE__,
-            server_arg->threshold,
-            server_arg->reporting
-        );
-        get_lq_descriptor()->reinit_link_metrics_fn(server_arg);
-
+    /* Forward remove to linkquality_stats process via rbus */
+    lq_rbus_publish_remove(stats);
     return RETURN_OK;
 }
 
@@ -949,9 +871,8 @@ int link_quality_event_exec_timeout(wifi_app_t *apps, void *arg, int len)
     }
 
     linkquality_data_t *data = (linkquality_data_t *)arg;
-
-    /* The number of devices is stored in the first element */
     int num_devs = len;
+
     stats_arg_t *stats_array = malloc(sizeof(stats_arg_t) * num_devs);
     if (!stats_array) {
         return RETURN_ERR;
@@ -969,10 +890,11 @@ int link_quality_event_exec_timeout(wifi_app_t *apps, void *arg, int len)
             stats_array[i].vap_index
         );
     }
-    get_lq_descriptor()->process_lq_stats_fn(stats_array, num_devs);
+
+    /* Forward periodic stats to linkquality_stats process via rbus */
+    lq_rbus_publish_periodic_stats(stats_array, num_devs);
     free(stats_array);
 
-    //dhcp_cleanup_old_entries();
     return RETURN_OK;
 }
 
@@ -1027,7 +949,7 @@ int exec_event_webconfig_event(wifi_app_t *apps, wifi_event_t *event)
             link_quality_param_reinit(apps, event);
             break;
         case wifi_event_exec_timeout:
-            link_quality_ignite_param_reinit(apps, event);
+            //link_quality_ignite_param_reinit(apps, event);
             break;
         default:
             wifi_util_error_print(WIFI_APPS, "%s:%d: event not handle %s\r\n", __func__, __LINE__,
@@ -1066,7 +988,7 @@ int link_quality_apps_auth_event(wifi_app_t *app, bool req, int sub_event,void *
     
     if (req)   {
         affinity_arg->event = sub_event;
-        get_lq_descriptor()->periodic_caffinity_stats_update_fn(affinity_arg, 1);
+        lq_rbus_publish_hal_indication(sub_event, affinity_arg);
     }
 
     free(affinity_arg);
@@ -1098,7 +1020,7 @@ int link_quality_apps_assoc_event(wifi_app_t *app, bool req,int sub_event,void *
     // dhcp_event = 0 (not a DHCP update) from memset
     if (req)   {
         affinity_arg->event = sub_event;
-        get_lq_descriptor()->periodic_caffinity_stats_update_fn(affinity_arg, 1);
+        lq_rbus_publish_hal_indication(sub_event, affinity_arg);
     } else {
         // Check sub_event for wifi_event_hal_assoc_rsp_frame OR wifi_event_hal_reassoc_rsp_frame
         if ((sub_event == wifi_event_hal_assoc_rsp_frame) || (sub_event == wifi_event_hal_reassoc_rsp_frame)) {
@@ -1119,9 +1041,9 @@ int link_quality_apps_assoc_event(wifi_app_t *app, bool req,int sub_event,void *
                 }
 
             }
-            wifi_util_info_print(WIFI_CTRL, " %s:%d Calling get_lq_descriptor()->periodic_caffinity_stats_update_fn for MAC %s, event=%d, status=%d\n",
+            wifi_util_info_print(WIFI_CTRL, " %s:%d Publishing HAL indication via rbus for MAC %s, event=%d, status=%d\n",
                 __func__, __LINE__, affinity_arg->mac_str, sub_event, status);
-            get_lq_descriptor()->periodic_caffinity_stats_update_fn(affinity_arg,1);
+            lq_rbus_publish_hal_indication(sub_event, affinity_arg);
         }
     }
     free(affinity_arg);
@@ -1154,7 +1076,7 @@ int link_quality_apps_disassoc_event(wifi_app_t *app, bool req,int sub_event,voi
     
     if (req) {
         affinity_arg->event = sub_event;
-        get_lq_descriptor()->periodic_caffinity_stats_update_fn(affinity_arg,1);
+        lq_rbus_publish_hal_indication(sub_event, affinity_arg);
     }
     
     free(affinity_arg);

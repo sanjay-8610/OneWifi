@@ -30,6 +30,7 @@
 #include "wifi_util.h"
 #include "timespec_macro.h"
 #include "wifi_linkquality.h"
+#include "wifi_stats_lq_rbus_publish.h"
 
 #define MAC_ARG(arg) \
     arg[0], \
@@ -456,12 +457,17 @@ int execute_assoc_client_stats_api(wifi_mon_collector_element_t *c_elem, wifi_mo
             }
         }
     }
-    // Send periodic stats update with complete data (including connected/disconnected times)
-    // This triggers BOTH link_quality_event_exec_timeout (for add_stats_metrics) 
-    // AND link_quality_periodic_stats_update (for caffinity timing updates)
+    // Send periodic stats update via rbus to linkquality_stats process
     if (link_data && num_devs != 0 && ((link_quality_measurement) || (rf_down_mesh_sta))) {
-        wifi_util_info_print(WIFI_MON, "%s:%d timestats Sending periodic link quality event for %d clients\n", __func__, __LINE__, num_devs);
-        apps_mgr_link_quality_event(&ctrl->apps_mgr, wifi_event_type_exec, wifi_event_exec_timeout, link_data, num_devs);
+        wifi_util_info_print(WIFI_MON, "%s:%d timestats Publishing periodic link quality stats for %d clients via rbus\n", __func__, __LINE__, num_devs);
+        stats_arg_t *stats_array = (stats_arg_t *)malloc(sizeof(stats_arg_t) * num_devs);
+        if (stats_array != NULL) {
+            for (unsigned int idx = 0; idx < num_devs; idx++) {
+                stats_array[idx] = link_data[idx].stats;
+            }
+            lq_rbus_publish_periodic_stats(stats_array, num_devs);
+            free(stats_array);
+        }
     }
 
     disconnect_event_queue = queue_create();
@@ -532,12 +538,10 @@ int execute_assoc_client_stats_api(wifi_mon_collector_element_t *c_elem, wifi_mo
                                 disconnect_link_data->stats.mac_str);
 
                             if (rf_down_mesh_sta) {
-                                apps_mgr_link_quality_event(&ctrl->apps_mgr,
-                                    wifi_event_type_hal_ind, wifi_event_exec_stop, disconnect_link_data, 0);
+                                lq_rbus_publish_remove(&disconnect_link_data->stats);
                             } else {
                                 sta->rapid_disconnect_flag = true;
-                                apps_mgr_link_quality_event(&ctrl->apps_mgr,
-                                    wifi_event_type_hal_ind, wifi_event_exec_timeout, disconnect_link_data, 0);
+                                lq_rbus_publish_rapid_disconnect(&disconnect_link_data->stats);
                             }
                         }
                     }
@@ -567,13 +571,11 @@ int execute_assoc_client_stats_api(wifi_mon_collector_element_t *c_elem, wifi_mo
                 __func__, __LINE__, (args->vap_index + 1),
             to_sta_key(tmp_sta->dev_stats.cli_MACAddress, sta_key));
             if(!is_zero_mac(tmp_sta->dev_stats.cli_MACAddress) && link_quality_measurement) {
-                linkquality_data_t *remove_link_data =(linkquality_data_t *) malloc (sizeof(linkquality_data_t));
-                if (remove_link_data != NULL) {
-                    memset(remove_link_data, 0, sizeof(linkquality_data_t));
-                    to_sta_key(tmp_sta->dev_stats.cli_MACAddress, remove_link_data->stats.mac_str);
-                    wifi_util_dbg_print(WIFI_MON, "%s:%d:  diag client disassociated  sta mac=%s:\n", __func__, __LINE__,remove_link_data->stats.mac_str);
-                    apps_mgr_link_quality_event(&ctrl->apps_mgr,wifi_event_type_hal_ind, wifi_event_exec_stop, remove_link_data, 0);
-                }
+                stats_arg_t remove_stats;
+                memset(&remove_stats, 0, sizeof(stats_arg_t));
+                to_sta_key(tmp_sta->dev_stats.cli_MACAddress, remove_stats.mac_str);
+                wifi_util_dbg_print(WIFI_MON, "%s:%d:  diag client disassociated  sta mac=%s:\n", __func__, __LINE__, remove_stats.mac_str);
+                lq_rbus_publish_remove(&remove_stats);
             }
             if (send_disconnect_event == 1) {
                 mac_addr = (unsigned char *)malloc(sizeof(mac_address_t));
