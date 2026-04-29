@@ -56,6 +56,54 @@ extern "C" {
 #endif // ONEWIFI_EASYCONNECT_APP_SUPPORT
 #include "motion_sensing.h"
 
+/* linkquality types inlined here to avoid requiring -Isource/apps/linkquality
+ * in every library that transitively includes wifi_apps_mgr.h. */
+#define MAX_FILE_NAME_SZ 1024
+
+typedef struct {
+    char path[MAX_FILE_NAME_SZ];
+    char output_file[MAX_FILE_NAME_SZ];
+    double threshold;
+    unsigned int sampling;
+    unsigned int reporting;
+} server_arg_t;
+
+typedef struct {
+    mac_addr_str_t mac_str;
+    mac_addr_str_t ap_mac_str;
+    unsigned int vap_index;
+    unsigned int radio_index;
+    int channel_utilization;
+    dev_stats_t dev;
+    struct timespec total_connected_time;
+    struct timespec total_disconnected_time;
+    int event;
+    unsigned int status_code;
+    int dhcp_event;
+    int dhcp_msg_type;
+} stats_arg_t;
+
+typedef struct {
+    int radio_2g_max_snr;
+    int radio_5g_max_snr;
+    int radio_6g_max_snr;
+} radio_max_snr_t;
+
+typedef struct {
+    double last_score;
+    double last_threshold;
+    int score_log_timer_id;
+    int last_service_state;
+    int iteration_count;
+} ignite_lq_state_t;
+
+typedef struct {
+    stats_arg_t stats;
+    server_arg_t server_arg;
+    int size;
+    ignite_lq_state_t ignite;
+} linkquality_data_t;
+
 #define MAX_APP_INIT_DATA 1024
 #define APP_DETACHED 0x01
 
@@ -104,6 +152,7 @@ typedef struct {
 #endif //EM_APP
         memwraptool_config_t memwraptool;
         sensing_app_obj_t sensing_obj;
+        linkquality_data_t linkquality;
     } u;
 } wifi_app_data_t;
 
@@ -146,6 +195,7 @@ typedef struct wifi_apps_mgr {
 int apps_mgr_init(wifi_ctrl_t *ctrl, wifi_app_descriptor_t *desc, unsigned int num);
 int apps_mgr_event(wifi_apps_mgr_t *apps_mgr, wifi_event_t *event);
 wifi_app_t *get_app_by_inst(wifi_apps_mgr_t *apps, wifi_app_inst_t inst);
+int apps_mgr_link_quality_event(wifi_apps_mgr_t *apps_mgr, wifi_event_type_t type, wifi_event_subtype_t sub_type, void *arg, int len);
 
 wifi_app_descriptor_t* get_app_desc(int *);
 #ifdef __cplusplus

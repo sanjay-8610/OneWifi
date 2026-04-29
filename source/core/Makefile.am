@@ -95,7 +95,7 @@ OneWifi_SOURCES += $(top_srcdir)/source/core/services/vap_svc.c  $(top_srcdir)/s
 OneWifi_SOURCES += $(top_srcdir)/source/core/services/vap_svc_mesh_ext.c
 
 OneWifi_SOURCES += $(top_srcdir)/source/utils/jsonconv.c $(top_srcdir)/source/utils/collection.c $(top_srcdir)/source/utils/scheduler.c $(top_srcdir)/source/utils/caps.c
-OneWifi_SOURCES += $(top_srcdir)/source/stats/wifi_monitor.c $(top_srcdir)/source/utils/ext_blaster.pb-c.c $(top_srcdir)/source/stats/wifi_stats.c $(top_srcdir)/source/stats/wifi_stats_radio_channel.c $(top_srcdir)/source/stats/wifi_stats_neighbor_report.c $(top_srcdir)/source/stats/wifi_stats_radio_diagnostics.c $(top_srcdir)/source/stats/wifi_stats_assoc_client.c $(top_srcdir)/source/stats/wifi_stats_radio_temperature.c $(top_srcdir)/source/stats/lq_ipc_sender.c
+OneWifi_SOURCES += $(top_srcdir)/source/stats/wifi_monitor.c $(top_srcdir)/source/utils/ext_blaster.pb-c.c $(top_srcdir)/source/stats/wifi_stats.c $(top_srcdir)/source/stats/wifi_stats_radio_channel.c $(top_srcdir)/source/stats/wifi_stats_neighbor_report.c $(top_srcdir)/source/stats/wifi_stats_radio_diagnostics.c $(top_srcdir)/source/stats/wifi_stats_assoc_client.c $(top_srcdir)/source/stats/wifi_stats_radio_temperature.c
 
 OneWifi_SOURCES += $(top_srcdir)/source/stubs/wifi_stubs.c
 OneWifi_SOURCES += $(top_srcdir)/source/ccsp/ccsp.c
@@ -169,6 +169,9 @@ endif
 
 OneWifi_SOURCES += $(top_srcdir)/source/apps/wifi_sensing/src/motion_sensing.c
 OneWifi_CPPFLAGS += -I$(top_srcdir)/source/apps/wifi_sensing/inc
+
+OneWifi_SOURCES += $(top_srcdir)/source/apps/linkquality/wifi_linkquality.c $(top_srcdir)/source/apps/linkquality/lq_ipc_sender.c
+OneWifi_CPPFLAGS += -I$(top_srcdir)/source/apps/linkquality
 
 if USE_DML_SOURCES
 # Common WFA DML sources (used in both ONEWIFI_DML_SUPPORT and ONEWIFI_JSON_DML_SUPPORT)

@@ -29,9 +29,10 @@
 
 static int lq_ipc_fd = -1;
 
-int lq_ipc_send(uint32_t msg_type, const char macs[][18], uint32_t count)
+int lq_ipc_send(uint32_t msg_type, const void *entries,
+                uint32_t count, size_t entry_size)
 {
-    if (count == 0 || macs == NULL) {
+    if (count != 0 && entries == NULL) {
         return -1;
     }
 
@@ -49,7 +50,8 @@ int lq_ipc_send(uint32_t msg_type, const char macs[][18], uint32_t count)
     addr.sun_family = AF_UNIX;
     strncpy(addr.sun_path, LQ_STATS_SOCKET_PATH, sizeof(addr.sun_path) - 1);
 
-    size_t payload_sz = sizeof(lq_ipc_header_t) + count * sizeof(lq_ipc_sta_entry_t);
+    size_t data_sz = count * entry_size;
+    size_t payload_sz = sizeof(lq_ipc_header_t) + data_sz;
     uint8_t *buf = malloc(payload_sz);
     if (!buf) {
         wifi_util_error_print(WIFI_MON,
@@ -61,11 +63,7 @@ int lq_ipc_send(uint32_t msg_type, const char macs[][18], uint32_t count)
     hdr->msg_type    = msg_type;
     hdr->num_entries = count;
 
-    lq_ipc_sta_entry_t *entries = (lq_ipc_sta_entry_t *)(buf + sizeof(lq_ipc_header_t));
-    for (uint32_t i = 0; i < count; i++) {
-        memset(&entries[i], 0, sizeof(lq_ipc_sta_entry_t));
-        strncpy(entries[i].mac_str, macs[i], sizeof(entries[i].mac_str) - 1);
-    }
+    memcpy(buf + sizeof(lq_ipc_header_t), entries, data_sz);
 
     ssize_t ret = sendto(lq_ipc_fd, buf, payload_sz, MSG_DONTWAIT,
                          (struct sockaddr *)&addr, sizeof(addr));
