@@ -21,6 +21,7 @@
 #include <sys/un.h>
 #include <unistd.h>
 #include "lq_ipc_sender.h"
+#include "lq_ipc_byteorder.h"
 #include "wifi_util.h"
 #include "run_qmgr.h"
 
@@ -86,6 +87,9 @@ int lq_ipc_send(uint32_t msg_type, const void *entries,
                 "%s:%d socket() failed: %s\n", __func__, __LINE__, strerror(errno));
             return -1;
         }
+        wifi_util_info_print(WIFI_APPS,
+            "%s:%d [IPC-SEND] Host byte order: %s, converting to network (big-endian) for IPC\n",
+            __func__, __LINE__, lq_detect_host_byteorder());
     }
 
     struct sockaddr_un addr;
@@ -107,6 +111,15 @@ int lq_ipc_send(uint32_t msg_type, const void *entries,
     hdr->num_entries = count;
 
     memcpy(buf + sizeof(lq_ipc_header_t), entries, data_sz);
+
+    /* Convert header to network byte order */
+    lq_hdr_hton(hdr);
+
+    /* Convert stats_arg_t entries to network byte order */
+    if (entry_size == sizeof(stats_arg_t) && count > 0) {
+        stats_arg_t *net_entries = (stats_arg_t *)(buf + sizeof(lq_ipc_header_t));
+        lq_stats_arg_array_hton(net_entries, count);
+    }
 
     ssize_t ret = sendto(lq_ipc_fd, buf, payload_sz, MSG_DONTWAIT,
                          (struct sockaddr *)&addr, sizeof(addr));

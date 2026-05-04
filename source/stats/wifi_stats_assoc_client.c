@@ -424,8 +424,10 @@ int execute_assoc_client_stats_api(wifi_mon_collector_element_t *c_elem, wifi_mo
 
             // Update link_data with the sta times for periodic caffinity stats update
             if (link_data && i < num_devs && ((link_quality_measurement) || (rf_down_mesh_sta))) {
-                link_data[i].stats.total_connected_time = sta->total_connected_time;
-                link_data[i].stats.total_disconnected_time = sta->total_disconnected_time;
+                link_data[i].stats.total_connected_time.tv_sec = (int64_t)sta->total_connected_time.tv_sec;
+                link_data[i].stats.total_connected_time.tv_nsec = (int32_t)sta->total_connected_time.tv_nsec;
+                link_data[i].stats.total_disconnected_time.tv_sec = (int64_t)sta->total_disconnected_time.tv_sec;
+                link_data[i].stats.total_disconnected_time.tv_nsec = (int32_t)sta->total_disconnected_time.tv_nsec;
             }
 
             wifi_util_dbg_print(WIFI_MON,

@@ -515,37 +515,44 @@ typedef struct {
 } link_report_t;
 
 typedef struct {
-    unsigned long cli_PacketsSent;
-    unsigned long cli_PacketsReceived;
-    unsigned long cli_RetransCount;
-    unsigned long long cli_RxRetries;
-    int cli_SNR;
-    unsigned int   cli_MaxDownlinkRate;
-    unsigned int cli_MaxUplinkRate;
-    unsigned int cli_LastDataDownlinkRate;
-    unsigned int cli_LastDataUplinkRate;
-    bool cli_PowerSaveMode;
-} dev_stats_t;
-
-typedef struct {
     size_t link_count;
     link_report_t *links;
 } report_batch_t;
 
+#pragma pack(push, 1)
+typedef struct {
+    int64_t tv_sec;
+    int32_t tv_nsec;
+} timestamp_t;
+
+typedef struct {
+    uint32_t cli_PacketsSent;
+    uint32_t cli_PacketsReceived;
+    uint32_t cli_RetransCount;
+    uint64_t cli_RxRetries;     // can we make it unit32_t ?
+    int32_t  cli_SNR;
+    uint32_t cli_MaxDownlinkRate;
+    uint32_t cli_MaxUplinkRate;
+    uint32_t cli_LastDataDownlinkRate;
+    uint32_t cli_LastDataUplinkRate;
+    uint8_t  cli_PowerSaveMode;
+} dev_stats_t;
+
 typedef struct {
     mac_addr_str_t mac_str;
     mac_addr_str_t ap_mac_str;
-    unsigned int vap_index;
-    unsigned int radio_index;
-    int channel_utilization;
+    uint8_t vap_index;
+    uint8_t radio_index;
+    int32_t channel_utilization;
     dev_stats_t dev;
-    struct timespec total_connected_time;
-    struct timespec total_disconnected_time;
-    int event;
-    unsigned int status_code;
-    int dhcp_event;
-    int dhcp_msg_type;
+    timestamp_t total_connected_time;
+    timestamp_t total_disconnected_time;
+    int32_t event;          // can be uint16_t ?
+    uint16_t status_code;
+    uint8_t dhcp_event;
+    uint8_t dhcp_msg_type;
 } stats_arg_t;
+#pragma pack(pop)
 
 typedef struct {
     unsigned int rss_check_interval; //minutes
