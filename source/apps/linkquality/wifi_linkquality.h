@@ -93,6 +93,7 @@ typedef struct {
     mac_addr_str_t mac_str;
     frame_data_t msg_data;
     struct timespec timestamp;  /* Capture time (CLOCK_REALTIME, ns precision) */
+    int ap_index;               /* VAP index where probe was received */
 } lq_probe_req_elem_t;
 
 typedef struct {
@@ -114,6 +115,9 @@ typedef struct {
     pthread_mutex_t probe_map_lock;
     hash_map_t *connected_sta_map;
     pthread_mutex_t connected_sta_lock;
+    int wei_recv_sock;             /* Socket to receive WEI → OneWifi messages */
+    uint8_t disconnect_count;      /* Last known disconnected client count from WEI */
+    bool send_probe_auth_assoc;    /* Flag: send probe/auth/assoc data when true */
 } linkquality_data_t;
 
 typedef uint8_t mac_address_t[MAC_ADDRESS_LEN];

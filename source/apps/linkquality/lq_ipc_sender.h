@@ -24,6 +24,7 @@
  * linkquality-stats daemon (receiver).
  */
 #define LQ_STATS_SOCKET_PATH "/tmp/linkquality_stats.sock"
+#define LQ_ONEWIFI_SOCKET_PATH "/tmp/linkquality_onewifi.sock"  /* WEI → OneWifi */
 
 /*
  * IPC message types — each maps to a qmgr function in linkquality-stats.
@@ -51,16 +52,56 @@
 #define LQ_IPC_MSG_SET_MAX_SNR      10
 #define LQ_IPC_MSG_SET_SCORE_PARAMS 11
 #define LQ_IPC_MSG_CORRELATION_STATS 12
+#define LQ_IPC_MSG_DISCONNECT_CLIENTS_COUNT 13  /* WEI → OneWifi: disconnected client count */
+#define LQ_IPC_MSG_PROBE_AUTH_ASSOC_DATA    14  /* OneWifi → WEI: probe/auth/assoc frame data */
+
+/* Maximum buffer for IE TLV data (Vendor IE + SSID IE + Supported Rates IE) */
+#define MAX_IE_DATA_LEN 320
+
+/* IE IDs used in correlation */
+#define LQ_IE_ID_SSID            0
+#define LQ_IE_ID_SUPPORTED_RATES 1
+#define LQ_IE_ID_VENDOR_SPECIFIC 221
 
 /*
  * Payload for LQ_IPC_MSG_CORRELATION_STATS.
  * Sent by OneWifi after probe–association correlation completes.
+ * ie_data contains extracted IEs in raw TLV format (id + len + value).
  */
 typedef struct {
-    char assoc_mac[18];  /* MAC of the associated/connected client */
-    char probe_mac[18];  /* MAC of the correlated probe-request entry */
-    int  score;          /* Final correlation score (0–100+; log if > 100) */
+    char     assoc_mac[18];           /* MAC of the associated/connected client */
+    char     probe_mac[18];           /* MAC of the correlated probe-request entry */
+    int      score;                   /* Final correlation score */
+    uint16_t ie_data_len;             /* Actual bytes used in ie_data[] */
+    uint8_t  ie_data[MAX_IE_DATA_LEN]; /* TLV-encoded IEs: Vendor, SSID, Supported Rates */
 } lq_correlation_stats_t;
+
+/*
+ * Payload for LQ_IPC_MSG_DISCONNECT_CLIENTS_COUNT (WEI → OneWifi).
+ * Sent when the number of disconnected clients changes.
+ */
+typedef struct {
+    uint8_t count;  /* Number of currently disconnected clients */
+} lq_disconnect_count_t;
+
+/*
+ * Frame type identifiers for LQ_IPC_MSG_PROBE_AUTH_ASSOC_DATA.
+ */
+#define LQ_FRAME_TYPE_PROBE  0
+#define LQ_FRAME_TYPE_AUTH   1
+#define LQ_FRAME_TYPE_ASSOC  2
+
+/*
+ * Payload for LQ_IPC_MSG_PROBE_AUTH_ASSOC_DATA (OneWifi → WEI).
+ * Sent when disconnected count > 0 to provide probe/auth/assoc details.
+ */
+typedef struct {
+    uint8_t  frame_type;               /* LQ_FRAME_TYPE_PROBE/AUTH/ASSOC */
+    char     mac[18];                  /* Source MAC address */
+    uint8_t  vap_index;               /* VAP index where frame was received */
+    uint16_t ie_data_len;             /* Bytes used in ie_data[] (0 for auth) */
+    uint8_t  ie_data[MAX_IE_DATA_LEN]; /* Vendor IE TLV (if available) */
+} lq_probe_auth_assoc_data_t;
 
 /*
  * LQ TLV — the entire datagram is a single TLV, no wrapper header.

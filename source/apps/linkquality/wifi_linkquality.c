@@ -33,6 +33,7 @@
 #include <linux/if.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
+#include <sys/un.h>
 #include <arpa/inet.h>
 #include <pthread.h>
 #include <pcap/pcap.h>
@@ -1284,6 +1285,153 @@ static void lq_evict_oldest_connected_sta(wifi_app_t *app)
     }
 }
 
+/* ========================================================================
+ * WEI → OneWifi IPC Receiver
+ * ======================================================================== */
+
+/*
+ * Initialize the AF_UNIX socket to receive messages from WEI.
+ */
+static int lq_wei_receiver_init(wifi_app_t *app)
+{
+    int fd = socket(AF_UNIX, SOCK_DGRAM | SOCK_CLOEXEC | SOCK_NONBLOCK, 0);
+    if (fd < 0) {
+        wifi_util_error_print(WIFI_APPS,
+            "%s:%d socket() failed: %s\n", __func__, __LINE__, strerror(errno));
+        return -1;
+    }
+
+    struct sockaddr_un addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sun_family = AF_UNIX;
+    strncpy(addr.sun_path, LQ_ONEWIFI_SOCKET_PATH, sizeof(addr.sun_path) - 1);
+    unlink(LQ_ONEWIFI_SOCKET_PATH);
+
+    if (bind(fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+        wifi_util_error_print(WIFI_APPS,
+            "%s:%d bind(%s) failed: %s\n", __func__, __LINE__,
+            LQ_ONEWIFI_SOCKET_PATH, strerror(errno));
+        close(fd);
+        return -1;
+    }
+
+    app->data.u.linkquality.wei_recv_sock = fd;
+    wifi_util_info_print(WIFI_APPS,
+        "%s:%d WEI receiver socket bound to %s (fd=%d)\n",
+        __func__, __LINE__, LQ_ONEWIFI_SOCKET_PATH, fd);
+    return 0;
+}
+
+/*
+ * Poll the WEI → OneWifi socket for incoming messages (non-blocking).
+ * Called from the periodic/event path.
+ */
+static void lq_wei_receiver_poll(wifi_app_t *app)
+{
+    int fd = app->data.u.linkquality.wei_recv_sock;
+    if (fd < 0) return;
+
+    uint8_t buf[16];
+    ssize_t n;
+
+    while ((n = recv(fd, buf, sizeof(buf), MSG_DONTWAIT)) > 0) {
+        if (n < 3) {
+            wifi_util_error_print(WIFI_APPS,
+                "%s:%d WEI msg too short (%zd bytes)\n", __func__, __LINE__, n);
+            continue;
+        }
+
+        uint8_t msg_type = buf[0];
+        uint16_t payload_len = (uint16_t)buf[1] | ((uint16_t)buf[2] << 8);
+        const uint8_t *payload = buf + 3;
+
+        if (3 + payload_len > n) {
+            wifi_util_error_print(WIFI_APPS,
+                "%s:%d WEI msg truncated: declared=%u actual=%zd\n",
+                __func__, __LINE__, payload_len, n - 3);
+            continue;
+        }
+
+        switch (msg_type) {
+        case LQ_IPC_MSG_DISCONNECT_CLIENTS_COUNT:
+        {
+            if (payload_len < sizeof(lq_disconnect_count_t)) break;
+            const lq_disconnect_count_t *dc = (const lq_disconnect_count_t *)payload;
+            wifi_util_info_print(WIFI_APPS,
+                "WEI-RECV %s:%d DISCONNECT_CLIENTS_COUNT=%u (prev=%u)\n",
+                __func__, __LINE__, dc->count,
+                app->data.u.linkquality.disconnect_count);
+
+            app->data.u.linkquality.disconnect_count = dc->count;
+            app->data.u.linkquality.send_probe_auth_assoc = (dc->count > 0);
+
+            wifi_util_info_print(WIFI_APPS,
+                "WEI-RECV %s:%d send_probe_auth_assoc=%s\n",
+                __func__, __LINE__,
+                app->data.u.linkquality.send_probe_auth_assoc ? "true" : "false");
+            break;
+        }
+        default:
+            wifi_util_error_print(WIFI_APPS,
+                "WEI-RECV %s:%d unknown msg_type=%u from WEI, ignoring\n",
+                __func__, __LINE__, msg_type);
+            break;
+        }
+    }
+}
+
+/*
+ * Send probe/auth/assoc frame data to WEI when disconnected clients exist.
+ * frame_type: LQ_FRAME_TYPE_PROBE / LQ_FRAME_TYPE_AUTH / LQ_FRAME_TYPE_ASSOC
+ * For auth frames, ie_data is not sent (ie_data_len=0).
+ */
+static void lq_send_probe_auth_assoc_data(wifi_app_t *app, uint8_t frame_type,
+                                           const char *mac, uint8_t vap_index,
+                                           const uint8_t *ies, int ies_len)
+{
+    if (!app->data.u.linkquality.send_probe_auth_assoc) {
+        return;  /* No disconnected clients — skip */
+    }
+
+    lq_probe_auth_assoc_data_t data;
+    memset(&data, 0, sizeof(data));
+    data.frame_type = frame_type;
+    strncpy(data.mac, mac, sizeof(data.mac) - 1);
+    data.vap_index = vap_index;
+
+    /* For auth frames, no Vendor IE is available */
+    if (frame_type != LQ_FRAME_TYPE_AUTH && ies && ies_len > 0) {
+        /* Extract only Vendor IE (221) for matching */
+        const uint8_t *ptr = ies;
+        int remaining = ies_len;
+        uint16_t offset = 0;
+
+        while (remaining >= 2 && offset < MAX_IE_DATA_LEN) {
+            uint8_t id = ptr[0];
+            uint8_t len = ptr[1];
+            if (remaining < 2 + len) break;
+            if (id == LQ_IE_ID_VENDOR_SPECIFIC) {
+                if (offset + 2 + len <= MAX_IE_DATA_LEN) {
+                    data.ie_data[offset++] = id;
+                    data.ie_data[offset++] = len;
+                    memcpy(data.ie_data + offset, ptr + 2, len);
+                    offset += len;
+                }
+            }
+            ptr += 2 + len;
+            remaining -= 2 + len;
+        }
+        data.ie_data_len = offset;
+    }
+
+    wifi_util_info_print(WIFI_APPS,
+        "PROBE-AUTH-ASSOC %s:%d Sending frame_type=%u mac=%s vap=%u ie_len=%u\n",
+        __func__, __LINE__, frame_type, mac, vap_index, data.ie_data_len);
+
+    lq_ipc_send(LQ_IPC_MSG_PROBE_AUTH_ASSOC_DATA, &data, 1,
+                sizeof(lq_probe_auth_assoc_data_t));
+}
+
 /*
  * Get pointer to IE blob and its length from a probe request frame.
  * Probe Request: mgmt_hdr(24) then IEs directly.
@@ -1351,6 +1499,7 @@ static const uint8_t *lq_find_ie(const uint8_t *ies, int ies_len, uint8_t ie_id,
     return NULL;
 }
 
+#if 0
 /*
  * Get a set of unique IE IDs present in an IE blob.
  * Returns count of unique IDs found, fills ie_ids array (max_ids capacity).
@@ -1383,6 +1532,7 @@ static int lq_get_ie_id_set(const uint8_t *ies, int ies_len, uint8_t *ie_ids, in
     }
     return count;
 }
+#endif
 
 static const char *lq_ie_id_to_name(uint8_t id)
 {
@@ -1402,8 +1552,9 @@ static const char *lq_ie_id_to_name(uint8_t id)
 }
 
 /*
- * Compute correlation index between a connected STA (assoc resp IEs) and
+ * Compute correlation index between a connected STA (assoc req IEs) and
  * a probe request entry (probe req IEs).
+ * Only compares: SSID IE (0), Supported Rates IE (1), Vendor Specific IE (221).
  * Returns correlation percentage (0-100).
  */
 static int lq_compute_correlation(lq_connected_sta_elem_t *sta,
@@ -1417,40 +1568,29 @@ static int lq_compute_correlation(lq_connected_sta_elem_t *sta,
         return 0;
     }
 
-    /* Collect unique IE IDs from both frames */
-    uint8_t sta_ie_ids[64] = { 0 };
-    uint8_t probe_ie_ids[64] = { 0 };
-    int sta_id_count = lq_get_ie_id_set(sta_ies, sta_ies_len, sta_ie_ids, 64);
-    int probe_id_count = lq_get_ie_id_set(probe_ies, probe_ies_len, probe_ie_ids, 64);
+    /* Only compare these specific IE IDs */
+    static const uint8_t target_ie_ids[] = {
+        LQ_IE_ID_SSID,             /* 0   */
+        LQ_IE_ID_SUPPORTED_RATES,  /* 1   */
+        LQ_IE_ID_VENDOR_SPECIFIC   /* 221 */
+    };
+    int num_targets = sizeof(target_ie_ids) / sizeof(target_ie_ids[0]);
 
     int matched = 0;
     int comparable = 0;
 
-    /* Compare IEs present in both */
-    for (int i = 0; i < probe_id_count; i++) {
-        uint8_t ie_id = probe_ie_ids[i];
-
-        /* Check if this IE also exists in sta */
-        int found_in_sta = 0;
-        for (int j = 0; j < sta_id_count; j++) {
-            if (sta_ie_ids[j] == ie_id) {
-                found_in_sta = 1;
-                break;
-            }
-        }
-
-        if (!found_in_sta) {
-            wifi_util_info_print(WIFI_APPS,
-                "CORR   IE id=%u (%s) -> Present only in probe_req_map (Ignored)\n",
-                ie_id, lq_ie_id_to_name(ie_id));
-            continue;
-        }
-
-        /* IE exists in both - compare values */
-        comparable++;
+    for (int t = 0; t < num_targets; t++) {
+        uint8_t ie_id = target_ie_ids[t];
         int probe_ie_len = 0, sta_ie_len = 0;
         const uint8_t *probe_ie_val = lq_find_ie(probe_ies, probe_ies_len, ie_id, &probe_ie_len);
         const uint8_t *sta_ie_val = lq_find_ie(sta_ies, sta_ies_len, ie_id, &sta_ie_len);
+
+        if (!probe_ie_val && !sta_ie_val) {
+            /* IE absent from both — skip */
+            continue;
+        }
+
+        comparable++;
 
         if (probe_ie_val && sta_ie_val &&
             probe_ie_len == sta_ie_len &&
@@ -1460,24 +1600,8 @@ static int lq_compute_correlation(lq_connected_sta_elem_t *sta,
                 "CORR   IE id=%u (%s) -> MATCH\n", ie_id, lq_ie_id_to_name(ie_id));
         } else {
             wifi_util_info_print(WIFI_APPS,
-                "CORR   IE id=%u (%s) -> NOT MATCH\n", ie_id, lq_ie_id_to_name(ie_id));
-        }
-    }
-
-    /* Check for IEs only in connected_sta_map */
-    for (int j = 0; j < sta_id_count; j++) {
-        uint8_t ie_id = sta_ie_ids[j];
-        int found_in_probe = 0;
-        for (int i = 0; i < probe_id_count; i++) {
-            if (probe_ie_ids[i] == ie_id) {
-                found_in_probe = 1;
-                break;
-            }
-        }
-        if (!found_in_probe) {
-            wifi_util_info_print(WIFI_APPS,
-                "CORR   IE id=%u (%s) -> Present only in connected_sta_map (Ignored)\n",
-                ie_id, lq_ie_id_to_name(ie_id));
+                "CORR   IE id=%u (%s) -> NOT MATCH (probe_len=%d sta_len=%d)\n",
+                ie_id, lq_ie_id_to_name(ie_id), probe_ie_len, sta_ie_len);
         }
     }
 
@@ -1487,6 +1611,7 @@ static int lq_compute_correlation(lq_connected_sta_elem_t *sta,
     return (matched * 100) / comparable;
 }
 
+#if 0
 /*
  * Extract the 802.11 sequence number from the management frame header.
  * seq_ctrl (little-endian 16-bit): bits[15:4] = sequence number, bits[3:0] = fragment.
@@ -1500,6 +1625,7 @@ static uint16_t lq_extract_seq_num(frame_data_t *msg)
     uint16_t seq_ctrl = le_to_host16(mgmt->seq_ctrl);
     return (seq_ctrl >> 4) & 0x0FFF;
 }
+#endif
 
 /*
  * Compute absolute difference between two struct timespec values in milliseconds.
@@ -1512,6 +1638,7 @@ static int64_t lq_ts_diff_ms(const struct timespec *a, const struct timespec *b)
     return diff_ns / 1000000LL;
 }
 
+#if 0
 /*
  * Compute sequence-number difference with wraparound (max 4095).
  * Returns the minimum of the forward and reverse distances on the ring.
@@ -1522,17 +1649,52 @@ static int lq_seq_diff(uint16_t a, uint16_t b)
     int backward = (int)((a - b + LQ_SEQNUM_MAX) % LQ_SEQNUM_MAX);
     return (forward < backward) ? forward : backward;
 }
+#endif
+
+/*
+ * Extract target IEs (SSID, Supported Rates, Vendor Specific) from an IE blob
+ * into a TLV buffer suitable for IPC transmission.
+ * Each extracted IE is stored as: [id(1) + len(1) + value(len)].
+ * Returns total bytes written to out_buf.
+ */
+static uint16_t lq_extract_target_ies(const uint8_t *ies, int ies_len,
+                                      uint8_t *out_buf, uint16_t out_buf_sz)
+{
+    static const uint8_t target_ids[] = {
+        LQ_IE_ID_SSID, LQ_IE_ID_SUPPORTED_RATES, LQ_IE_ID_VENDOR_SPECIFIC
+    };
+    int num_targets = sizeof(target_ids) / sizeof(target_ids[0]);
+    uint16_t offset = 0;
+
+    for (int t = 0; t < num_targets; t++) {
+        int ie_len = 0;
+        const uint8_t *ie_val = lq_find_ie(ies, ies_len, target_ids[t], &ie_len);
+        if (!ie_val || ie_len == 0)
+            continue;
+        /* Need space for id(1) + len(1) + value(ie_len) */
+        if (offset + 2 + ie_len > out_buf_sz)
+            break;
+        out_buf[offset++] = target_ids[t];
+        out_buf[offset++] = (uint8_t)ie_len;
+        memcpy(out_buf + offset, ie_val, ie_len);
+        offset += ie_len;
+    }
+    return offset;
+}
 
 /*
  * Run correlation for a given connected STA against all probe_req_map entries.
  * Must be called with probe_map_lock held.
  *
- * Enhanced correlation:
- *   Final Score = IE match% + RSSI_weight(10) + Timestamp_weight(10) + SeqNum_weight(10)
- *   Strong correlation: all three parameter thresholds (RSSI, timestamp, seq num) pass.
+ * Enhanced correlation uses:
+ *   - RSSI comparison (weight: 10)
+ *   - Timestamp comparison (weight: 10)
+ *   - VAP Index comparison (weight: 10)
+ *   - IE match (SSID + Vendor + Supported Rates) as base score
+ *
+ *   Final Score = IE match% + RSSI_weight + Timestamp_weight + VAPIndex_weight
  *   High correlation  : final score >= LQ_CORRELATION_THRESHOLD (80%)
  *   Medium confidence : LQ_MEDIUM_CORR_THRESHOLD (70%) <= score < LQ_CORRELATION_THRESHOLD
- *                       → probe MAC stored in connected_sta_map entry for later reference.
  */
 static void lq_correlate_sta_with_probes(wifi_app_t *app, lq_connected_sta_elem_t *sta)
 {
@@ -1540,15 +1702,13 @@ static void lq_correlate_sta_with_probes(wifi_app_t *app, lq_connected_sta_elem_
     if (!probe_map)
         return;
 
-    uint16_t assoc_seq = lq_extract_seq_num(&sta->msg_data);
-
     lq_probe_req_elem_t *probe = (lq_probe_req_elem_t *)hash_map_get_first(probe_map);
     while (probe != NULL) {
         wifi_util_info_print(WIFI_APPS,
             "CORR %s:%d Comparing connected STA=%s with probe MAC=%s\n",
             __func__, __LINE__, sta->mac_str, probe->mac_str);
 
-        /* ---- IE match percentage (base score) ---- */
+        /* ---- IE match percentage (base score: SSID + Vendor + Supported Rates) ---- */
         int ie_match = lq_compute_correlation(sta, probe);
 
         /* ---- RSSI comparison ---- */
@@ -1579,62 +1739,75 @@ static void lq_correlate_sta_with_probes(wifi_app_t *app, lq_connected_sta_elem_
                 sta->mac_str, probe->mac_str);
         }
 
-        /* ---- Sequence number comparison ---- */
-        uint16_t probe_seq = lq_extract_seq_num(&probe->msg_data);
-        int seq_diff = lq_seq_diff(assoc_seq, probe_seq);
-        int seq_weight = 0;
-        if (seq_diff < LQ_SEQNUM_THRESHOLD) {
-            seq_weight = LQ_PARAM_WEIGHT;
+        /* ---- VAP Index comparison ---- */
+        int vap_weight = 0;
+        if (sta->ap_index == probe->ap_index) {
+            vap_weight = LQ_PARAM_WEIGHT;
         } else {
             wifi_util_info_print(WIFI_APPS,
-                "CORR %s:%d Seq num diff %d exceeds threshold %d "
-                "(assoc_seq=%u probe_seq=%u) STA=%s probe=%s\n",
-                __func__, __LINE__, seq_diff, LQ_SEQNUM_THRESHOLD,
-                assoc_seq, probe_seq, sta->mac_str, probe->mac_str);
+                "CORR %s:%d VAP Index mismatch (assoc=%d probe=%d) STA=%s probe=%s\n",
+                __func__, __LINE__, sta->ap_index, probe->ap_index,
+                sta->mac_str, probe->mac_str);
         }
 
         /* ---- Strong correlation flag ---- */
-        bool strong_correlation = (rssi_weight && ts_weight && seq_weight);
+        bool strong_correlation = (rssi_weight && ts_weight && vap_weight);
 
         /* ---- Final composite score ---- */
-        int final_score = ie_match + rssi_weight + ts_weight + seq_weight;
+        int final_score = ie_match + rssi_weight + ts_weight + vap_weight;
 
         if (final_score > 100) {
             wifi_util_info_print(WIFI_APPS,
                 "CORR %s:%d Final score %d%% exceeds 100%% "
-                "(ie=%d rssi_w=%d ts_w=%d seq_w=%d) STA=%s probe=%s\n",
+                "(ie=%d rssi_w=%d ts_w=%d vap_w=%d) STA=%s probe=%s\n",
                 __func__, __LINE__, final_score,
-                ie_match, rssi_weight, ts_weight, seq_weight,
+                ie_match, rssi_weight, ts_weight, vap_weight,
                 sta->mac_str, probe->mac_str);
         }
 
         wifi_util_info_print(WIFI_APPS,
             "CORR %s:%d Result: STA=%s vs Probe=%s -> "
-            "IE=%d%% RSSI_w=%d TS_w=%d SEQ_w=%d Final=%d%% strong=%d\n",
+            "IE=%d%% RSSI_w=%d TS_w=%d VAP_w=%d Final=%d%% strong=%d\n",
             __func__, __LINE__, sta->mac_str, probe->mac_str,
-            ie_match, rssi_weight, ts_weight, seq_weight, final_score,
+            ie_match, rssi_weight, ts_weight, vap_weight, final_score,
             (int)strong_correlation);
 
         if (final_score >= LQ_CORRELATION_THRESHOLD) {
             wifi_util_error_print(WIFI_APPS,
                 "CORR HIGH CORRELATION DETECTED: %d%% (strong=%d)\n"
                 "  Connected Client:\n"
-                "    MAC: %s  ap_index: %d  RSSI: %d  seq: %u\n"
+                "    MAC: %s  ap_index: %d  RSSI: %d\n"
                 "  Probe Request Entry:\n"
-                "    MAC: %s  ap_index: %d  RSSI: %d  seq: %u\n"
-                "  Params: ie=%d%% rssi_diff=%d ts_diff=%lldms seq_diff=%d\n",
+                "    MAC: %s  ap_index: %d  RSSI: %d\n"
+                "  Params: ie=%d%% rssi_diff=%d ts_diff=%lldms vap_match=%d\n",
                 final_score, (int)strong_correlation,
-                sta->mac_str, sta->ap_index, sta->sig_dbm, assoc_seq,
-                probe->mac_str, probe->msg_data.frame.ap_index,
-                probe->msg_data.frame.sig_dbm, probe_seq,
-                ie_match, rssi_diff, (long long)ts_diff_ms, seq_diff);
+                sta->mac_str, sta->ap_index, sta->sig_dbm,
+                probe->mac_str, probe->ap_index,
+                probe->msg_data.frame.sig_dbm,
+                ie_match, rssi_diff, (long long)ts_diff_ms, (sta->ap_index == probe->ap_index));
 
-            /* Send LQ_IPC_CORRELATION_STATS event to WEI */
+            /* Build correlation stats with extracted IE data */
             lq_correlation_stats_t corr_stats;
             memset(&corr_stats, 0, sizeof(corr_stats));
             strncpy(corr_stats.assoc_mac, sta->mac_str, sizeof(corr_stats.assoc_mac) - 1);
             strncpy(corr_stats.probe_mac, probe->mac_str, sizeof(corr_stats.probe_mac) - 1);
             corr_stats.score = final_score;
+
+            /* Extract target IEs from probe frame into TLV buffer */
+            int probe_ies_len = 0;
+            const uint8_t *probe_ies = lq_get_probe_req_ies(&probe->msg_data, &probe_ies_len);
+            if (probe_ies && probe_ies_len > 0) {
+                corr_stats.ie_data_len = lq_extract_target_ies(
+                    probe_ies, probe_ies_len,
+                    corr_stats.ie_data, MAX_IE_DATA_LEN);
+            }
+
+            wifi_util_info_print(WIFI_APPS,
+                "CORR %s:%d Sending CORRELATION_STATS: assoc=%s probe=%s "
+                "score=%d ie_data_len=%u\n",
+                __func__, __LINE__, corr_stats.assoc_mac, corr_stats.probe_mac,
+                corr_stats.score, corr_stats.ie_data_len);
+
             lq_ipc_send(LQ_IPC_MSG_CORRELATION_STATS, &corr_stats, 1,
                         sizeof(lq_correlation_stats_t));
 
@@ -1843,6 +2016,7 @@ static int link_quality_probe_req_event(wifi_app_t *apps, void *arg)
         memcpy(&elem->msg_data, msg, sizeof(frame_data_t));
         memcpy(elem->mac_str, mac_str, sizeof(mac_addr_str_t));
         clock_gettime(CLOCK_REALTIME, &elem->timestamp);
+        elem->ap_index = msg->frame.ap_index;
         hash_map_put(apps->data.u.linkquality.probe_req_map, strdup(mac_str), elem);
         wifi_util_info_print(WIFI_APPS,
             "PROBE_REQ %s:%d New entry mac=%s ap_index=%d rssi=%d\n",
@@ -1851,9 +2025,23 @@ static int link_quality_probe_req_event(wifi_app_t *apps, void *arg)
         /* Update existing entry with latest frame data */
         memcpy(&elem->msg_data, msg, sizeof(frame_data_t));
         clock_gettime(CLOCK_REALTIME, &elem->timestamp);
+        elem->ap_index = msg->frame.ap_index;
     }
 
     pthread_mutex_unlock(&apps->data.u.linkquality.probe_map_lock);
+
+    /* Poll WEI receiver for disconnect count updates */
+    lq_wei_receiver_poll(apps);
+
+    /* If disconnected clients exist, send probe data to WEI for matching */
+    if (apps->data.u.linkquality.send_probe_auth_assoc) {
+        unsigned int mgmt_hdr = 24;
+        const uint8_t *ies = (msg->frame.len > mgmt_hdr) ? (msg->data + mgmt_hdr) : NULL;
+        int ies_len = (msg->frame.len > mgmt_hdr) ? (msg->frame.len - mgmt_hdr) : 0;
+        lq_send_probe_auth_assoc_data(apps, LQ_FRAME_TYPE_PROBE, mac_str,
+                                       (uint8_t)msg->frame.ap_index, ies, ies_len);
+    }
+
     return RETURN_OK;
 }
 
@@ -1879,6 +2067,15 @@ int exec_event_hal_ind(wifi_app_t *apps, wifi_event_subtype_t sub_type, void *ar
         case wifi_event_hal_auth_frame:
             wifi_util_info_print(WIFI_APPS," %s:%d event = %d\n",__func__,__LINE__,sub_type);
             link_quality_apps_auth_event(apps,true,sub_type,arg);
+            /* Send auth frame data to WEI if disconnected clients exist */
+            if (apps->data.u.linkquality.send_probe_auth_assoc) {
+                frame_data_t *auth_msg = (frame_data_t *)arg;
+                mac_addr_str_t auth_mac = { 0 };
+                to_mac_str(auth_msg->frame.sta_mac, auth_mac);
+                /* Auth has no Vendor IE — send MAC only */
+                lq_send_probe_auth_assoc_data(apps, LQ_FRAME_TYPE_AUTH, auth_mac,
+                                               (uint8_t)auth_msg->frame.ap_index, NULL, 0);
+            }
             break;
         
         case wifi_event_hal_deauth_frame:
@@ -1889,6 +2086,20 @@ int exec_event_hal_ind(wifi_app_t *apps, wifi_event_subtype_t sub_type, void *ar
         case wifi_event_hal_assoc_req_frame:
             wifi_util_info_print(WIFI_APPS," %s:%d event = %d\n",__func__,__LINE__,sub_type);
             link_quality_apps_assoc_event(apps,true,sub_type,arg);
+            /* Send assoc req frame data to WEI if disconnected clients exist */
+            if (apps->data.u.linkquality.send_probe_auth_assoc) {
+                frame_data_t *assoc_msg = (frame_data_t *)arg;
+                mac_addr_str_t assoc_mac = { 0 };
+                to_mac_str(assoc_msg->frame.sta_mac, assoc_mac);
+                unsigned int assoc_hdr = 24 + 4; /* mgmt_hdr + capab + listen_interval */
+                const uint8_t *assoc_ies = (assoc_msg->frame.len > assoc_hdr) ?
+                    (assoc_msg->data + assoc_hdr) : NULL;
+                int assoc_ies_len = (assoc_msg->frame.len > assoc_hdr) ?
+                    (int)(assoc_msg->frame.len - assoc_hdr) : 0;
+                lq_send_probe_auth_assoc_data(apps, LQ_FRAME_TYPE_ASSOC, assoc_mac,
+                                               (uint8_t)assoc_msg->frame.ap_index,
+                                               assoc_ies, assoc_ies_len);
+            }
             break;
  
         case wifi_event_hal_assoc_rsp_frame:
@@ -1899,6 +2110,20 @@ int exec_event_hal_ind(wifi_app_t *apps, wifi_event_subtype_t sub_type, void *ar
         case wifi_event_hal_reassoc_req_frame:
             wifi_util_info_print(WIFI_APPS," %s:%d event = %d\n",__func__,__LINE__,sub_type);
             link_quality_apps_assoc_event(apps,true,sub_type,arg);
+            /* Send reassoc req frame data to WEI if disconnected clients exist */
+            if (apps->data.u.linkquality.send_probe_auth_assoc) {
+                frame_data_t *reassoc_msg = (frame_data_t *)arg;
+                mac_addr_str_t reassoc_mac = { 0 };
+                to_mac_str(reassoc_msg->frame.sta_mac, reassoc_mac);
+                unsigned int reassoc_hdr = 24 + 10; /* mgmt_hdr + capab + listen + current_ap */
+                const uint8_t *reassoc_ies = (reassoc_msg->frame.len > reassoc_hdr) ?
+                    (reassoc_msg->data + reassoc_hdr) : NULL;
+                int reassoc_ies_len = (reassoc_msg->frame.len > reassoc_hdr) ?
+                    (int)(reassoc_msg->frame.len - reassoc_hdr) : 0;
+                lq_send_probe_auth_assoc_data(apps, LQ_FRAME_TYPE_ASSOC, reassoc_mac,
+                                               (uint8_t)reassoc_msg->frame.ap_index,
+                                               reassoc_ies, reassoc_ies_len);
+            }
             break;
         case wifi_event_hal_reassoc_rsp_frame:
             wifi_util_info_print(WIFI_APPS," %s:%d event = %d\n",__func__,__LINE__,sub_type);
@@ -1982,6 +2207,12 @@ int link_quality_init(wifi_app_t *app, unsigned int create_flag)
     app->data.u.linkquality.connected_sta_map = hash_map_create();
     pthread_mutex_init(&app->data.u.linkquality.connected_sta_lock, NULL);
 
+    /* Initialize WEI receiver socket for LQ_IPC_MSG_DISCONNECT_CLIENTS_COUNT */
+    app->data.u.linkquality.wei_recv_sock = -1;
+    app->data.u.linkquality.disconnect_count = 0;
+    app->data.u.linkquality.send_probe_auth_assoc = false;
+    lq_wei_receiver_init(app);
+
     rc = get_bus_descriptor()->bus_open_fn(&app->handle, component_name);
     if (rc != bus_error_success) {
         wifi_util_error_print(WIFI_APPS, "%s:%d bus: bus_open_fn open failed for component:%s, rc:%d\n",
@@ -2042,6 +2273,13 @@ int link_quality_deinit(wifi_app_t *app)
     }
     pthread_mutex_unlock(&app->data.u.linkquality.connected_sta_lock);
     pthread_mutex_destroy(&app->data.u.linkquality.connected_sta_lock);
+
+    /* Cleanup WEI receiver socket */
+    if (app->data.u.linkquality.wei_recv_sock >= 0) {
+        close(app->data.u.linkquality.wei_recv_sock);
+        app->data.u.linkquality.wei_recv_sock = -1;
+        unlink(LQ_ONEWIFI_SOCKET_PATH);
+    }
 
     return RETURN_OK;
 }
