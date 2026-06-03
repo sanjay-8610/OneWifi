@@ -56,7 +56,10 @@
 #define LQ_IPC_MSG_PROBE_AUTH_ASSOC_DATA    14  /* OneWifi → WEI: probe/auth/assoc frame data */
 
 /* Maximum buffer for IE TLV data (Vendor IE + SSID IE + Supported Rates IE) */
-#define MAX_IE_DATA_LEN 320
+#define MAX_IE_DATA_LEN 640
+
+/* Maximum number of Vendor IEs to extract and compare */
+#define MAX_VENDOR_IES 4
 
 /* IE IDs used in correlation */
 #define LQ_IE_ID_SSID            0
@@ -66,14 +69,16 @@
 /*
  * Payload for LQ_IPC_MSG_CORRELATION_STATS.
  * Sent by OneWifi after probe–association correlation completes.
- * ie_data contains extracted IEs in raw TLV format (id + len + value).
+ * ie_data contains extracted IEs from Association Request in raw TLV format (id + len + value).
+ * All Vendor IEs (max 4) from the Assoc Request are included.
+ * From the Probe Request, only the MAC address is used.
  */
 typedef struct {
     char     assoc_mac[18];           /* MAC of the associated/connected client */
     char     probe_mac[18];           /* MAC of the correlated probe-request entry */
     int      score;                   /* Final correlation score */
     uint16_t ie_data_len;             /* Actual bytes used in ie_data[] */
-    uint8_t  ie_data[MAX_IE_DATA_LEN]; /* TLV-encoded IEs: Vendor, SSID, Supported Rates */
+    uint8_t  ie_data[MAX_IE_DATA_LEN]; /* TLV-encoded IEs from Assoc Request: all Vendor IEs (max 4), SSID, Supported Rates */
 } lq_correlation_stats_t;
 
 /*
@@ -94,13 +99,15 @@ typedef struct {
 /*
  * Payload for LQ_IPC_MSG_PROBE_AUTH_ASSOC_DATA (OneWifi → WEI).
  * Sent when disconnected count > 0 to provide probe/auth/assoc details.
+ * Includes all Vendor IEs (max 4) from the frame.
  */
 typedef struct {
     uint8_t  frame_type;               /* LQ_FRAME_TYPE_PROBE/AUTH/ASSOC */
     char     mac[18];                  /* Source MAC address */
     uint8_t  vap_index;               /* VAP index where frame was received */
     uint16_t ie_data_len;             /* Bytes used in ie_data[] (0 for auth) */
-    uint8_t  ie_data[MAX_IE_DATA_LEN]; /* Vendor IE TLV (if available) */
+    uint8_t  ie_data[MAX_IE_DATA_LEN]; /* All Vendor IE TLVs (max 4, if available) */
+    uint8_t  vendor_ie_count;          /* Number of Vendor IEs in ie_data[] */
 } lq_probe_auth_assoc_data_t;
 
 /*
