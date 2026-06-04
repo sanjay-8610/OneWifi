@@ -1201,20 +1201,26 @@ int link_quality_apps_assoc_event(wifi_app_t *app, bool req,int sub_event,void *
                     sta_elem = (lq_connected_sta_elem_t *)hash_map_get(
                         app->data.u.linkquality.connected_sta_map, sta_mac_str);
                 }
-                pthread_mutex_unlock(&app->data.u.linkquality.connected_sta_lock);
 
                 if (sta_elem != NULL) {
                     wifi_util_info_print(WIFI_APPS,
                         "CORR %s:%d Response success, triggering correlation for STA=%s\n",
                         __func__, __LINE__, sta_mac_str);
                     pthread_mutex_lock(&app->data.u.linkquality.probe_map_lock);
+                    wifi_util_info_print(WIFI_APPS,
+                        "CORR %s:%d Before correlation: probe_req_map count=%u, connected_sta_map count=%u\n",
+                        __func__, __LINE__,
+                        hash_map_count(app->data.u.linkquality.probe_req_map),
+                        hash_map_count(app->data.u.linkquality.connected_sta_map));
                     lq_correlate_sta_with_probes(app, sta_elem);
                     pthread_mutex_unlock(&app->data.u.linkquality.probe_map_lock);
                 } else {
                     wifi_util_info_print(WIFI_APPS,
-                        "CORR %s:%d Response success but STA=%s not found in connected_sta_map (no prior request)\n",
+                        "CORR %s:%d Response success but STA=%s not found in connected_sta_map "
+                        "(assoc req not yet received, skipping correlation)\n",
                         __func__, __LINE__, sta_mac_str);
                 }
+                pthread_mutex_unlock(&app->data.u.linkquality.connected_sta_lock);
             } else {
                 /* Response failure: remove STA from connected_sta_map */
                 mac_addr_str_t sta_mac_str = { 0 };
@@ -1989,6 +1995,26 @@ static void lq_correlate_sta_with_probes(wifi_app_t *app, lq_connected_sta_elem_
 
             lq_ipc_send(LQ_IPC_MSG_CORRELATION_STATS, &corr_stats, 1,
                         sizeof(lq_correlation_stats_t));
+
+            /* Post-correlation cleanup: remove from connected_sta_map and probe_req_map */
+            lq_connected_sta_elem_t *removed_sta = (lq_connected_sta_elem_t *)hash_map_remove(
+                app->data.u.linkquality.connected_sta_map, sta->mac_str);
+            if (removed_sta) {
+                wifi_util_info_print(WIFI_APPS,
+                    "CORR %s:%d Removed STA=%s from connected_sta_map (direct match)\n",
+                    __func__, __LINE__, sta->mac_str);
+                free(removed_sta);
+            }
+
+            lq_probe_req_elem_t *removed_probe = (lq_probe_req_elem_t *)hash_map_remove(
+                probe_map, probe->mac_str);
+            if (removed_probe) {
+                wifi_util_info_print(WIFI_APPS,
+                    "CORR %s:%d Removed probe=%s from probe_req_map (direct match)\n",
+                    __func__, __LINE__, probe->mac_str);
+                free(removed_probe);
+            }
+
             return;  /* Direct match found, done */
         }
 
@@ -2060,8 +2086,38 @@ static void lq_correlate_sta_with_probes(wifi_app_t *app, lq_connected_sta_elem_
     /* ---- Best Match Selection Logic ---- */
     if (candidate_count == 0) {
         wifi_util_info_print(WIFI_APPS,
-            "CORR %s:%d No high-correlation candidates found for STA=%s\n",
+            "CORR %s:%d No high-correlation candidates found for STA=%s, "
+            "sending fallback CORRELATION_STATS with probe_mac=NULL score=0\n",
             __func__, __LINE__, sta->mac_str);
+
+        /* Fallback: station associated without a matching probe request */
+        lq_correlation_stats_t corr_stats;
+        memset(&corr_stats, 0, sizeof(corr_stats));
+        strncpy(corr_stats.assoc_mac, sta->mac_str, sizeof(corr_stats.assoc_mac) - 1);
+        /* probe_mac remains zeroed (NULL) */
+        corr_stats.score = 0;
+
+        /* Still extract IEs from Association Request for WEI */
+        int assoc_ies_len = 0;
+        const uint8_t *assoc_ies = lq_get_assoc_req_ies(sta, &assoc_ies_len);
+        if (assoc_ies && assoc_ies_len > 0) {
+            corr_stats.ie_data_len = lq_extract_all_target_ies(
+                assoc_ies, assoc_ies_len,
+                corr_stats.ie_data, MAX_IE_DATA_LEN);
+        }
+
+        lq_ipc_send(LQ_IPC_MSG_CORRELATION_STATS, &corr_stats, 1,
+                    sizeof(lq_correlation_stats_t));
+
+        /* Post-correlation cleanup: remove from connected_sta_map */
+        lq_connected_sta_elem_t *removed = (lq_connected_sta_elem_t *)hash_map_remove(
+            app->data.u.linkquality.connected_sta_map, sta->mac_str);
+        if (removed) {
+            wifi_util_info_print(WIFI_APPS,
+                "CORR %s:%d Removed STA=%s from connected_sta_map (fallback path)\n",
+                __func__, __LINE__, sta->mac_str);
+            free(removed);
+        }
         return;
     }
 
@@ -2133,6 +2189,25 @@ static void lq_correlate_sta_with_probes(wifi_app_t *app, lq_connected_sta_elem_
 
     lq_ipc_send(LQ_IPC_MSG_CORRELATION_STATS, &corr_stats, 1,
                 sizeof(lq_correlation_stats_t));
+
+    /* Post-correlation cleanup: remove from connected_sta_map and probe_req_map */
+    lq_connected_sta_elem_t *removed_sta = (lq_connected_sta_elem_t *)hash_map_remove(
+        app->data.u.linkquality.connected_sta_map, sta->mac_str);
+    if (removed_sta) {
+        wifi_util_info_print(WIFI_APPS,
+            "CORR %s:%d Removed STA=%s from connected_sta_map (best match)\n",
+            __func__, __LINE__, sta->mac_str);
+        free(removed_sta);
+    }
+
+    lq_probe_req_elem_t *removed_probe = (lq_probe_req_elem_t *)hash_map_remove(
+        probe_map, best_probe->mac_str);
+    if (removed_probe) {
+        wifi_util_info_print(WIFI_APPS,
+            "CORR %s:%d Removed probe=%s from probe_req_map (best match)\n",
+            __func__, __LINE__, best_probe->mac_str);
+        free(removed_probe);
+    }
 }
 
 /*
@@ -2226,6 +2301,23 @@ static void lq_dump_probe_req_frame(frame_data_t *msg)
         wifi_util_info_print(WIFI_APPS,
             "PROBE_REQ %s:%d IEs total_len=%d\n", __func__, __LINE__, ie_len);
 
+        /* Extract and log SSID from probe request */
+        int ssid_ie_len = 0;
+        const uint8_t *ssid_val = lq_find_ie(ie, ie_len, LQ_IE_ID_SSID, &ssid_ie_len);
+        if (ssid_val != NULL && ssid_ie_len > 0) {
+            char ssid_str[33] = { 0 };
+            int copy_len = (ssid_ie_len < 32) ? ssid_ie_len : 32;
+            memcpy(ssid_str, ssid_val, copy_len);
+            ssid_str[copy_len] = '\0';
+            wifi_util_info_print(WIFI_APPS,
+                "PROBE_REQ %s:%d SSID=\"%s\" (len=%d) - %s\n",
+                __func__, __LINE__, ssid_str, ssid_ie_len, "directed probe");
+        } else {
+            wifi_util_info_print(WIFI_APPS,
+                "PROBE_REQ %s:%d SSID is wildcard/broadcast (len=%d) - undirected probe\n",
+                __func__, __LINE__, ssid_ie_len);
+        }
+
         while (ie_len >= 2) {
             uint8_t id = ie[0];
             uint8_t len = ie[1];
@@ -2271,6 +2363,7 @@ static void lq_evict_oldest_probe_entry(wifi_app_t *app)
 
 static int link_quality_probe_req_event(wifi_app_t *apps, void *arg)
 {
+    wifi_util_info_print(WIFI_CTRL, "%s:%d ENTER\n", __func__, __LINE__);
     if (!arg) {
         wifi_util_error_print(WIFI_CTRL, "%s:%d NULL arg\n", __func__, __LINE__);
         return RETURN_ERR;
@@ -2333,6 +2426,9 @@ static int link_quality_probe_req_event(wifi_app_t *apps, void *arg)
             "PROBE_REQ %s:%d New entry mac=%s ap_index=%d rssi=%d\n",
             __func__, __LINE__, mac_str, msg->frame.ap_index, msg->frame.sig_dbm);
     } else {
+        wifi_util_info_print(WIFI_APPS,
+            "PROBE_REQ %s:%d update existing mac=%s ap_index=%d rssi=%d\n",
+            __func__, __LINE__, mac_str, msg->frame.ap_index, msg->frame.sig_dbm);
         /* Update existing entry with latest frame data */
         memcpy(&elem->msg_data, msg, sizeof(frame_data_t));
         clock_gettime(CLOCK_REALTIME, &elem->timestamp);

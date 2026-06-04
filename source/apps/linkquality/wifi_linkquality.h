@@ -35,13 +35,13 @@ extern "C" {
 #define IGNITE_SCORE_LOG_INTERVAL_MS 900000 // 15 mins
 #define IGNITE_INITIAL_PUBLISH_ITERATIONS 5
 #define MAX_LQ_PROBE_ENTRIES 100
-#define MAX_LQ_CONNECTED_STA_ENTRIES 50
+#define MAX_LQ_CONNECTED_STA_ENTRIES 10
 #define LQ_CORRELATION_THRESHOLD 80
 #define LQ_MEDIUM_CORR_THRESHOLD 70
 
 /* Per-parameter comparison thresholds */
-#define LQ_RSSI_THRESHOLD_DB      5      /* Allowed RSSI difference (dB) */
-#define LQ_TIMESTAMP_THRESHOLD_MS 100    /* Allowed timestamp difference (ms) */
+#define LQ_RSSI_THRESHOLD_DB      10     /* Allowed RSSI difference (dB) */
+#define LQ_TIMESTAMP_THRESHOLD_MS 2000   /* Allowed timestamp difference (ms) */
 #define LQ_SEQNUM_THRESHOLD       100    /* Allowed sequence-number difference */
 #define LQ_SEQNUM_MAX             4096   /* 802.11 sequence number wraps at 4095 */
 
