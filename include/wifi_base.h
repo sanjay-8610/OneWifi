@@ -533,6 +533,12 @@ typedef struct {
     link_report_t *links;
 } report_batch_t;
 
+/* Maximum buffer for IE TLV data in stats_arg_t */
+#define MAX_STATS_IE_DATA_LEN 640
+
+/* Maximum number of Vendor IEs to extract */
+#define MAX_STATS_VENDOR_IES 4
+
 typedef struct {
     mac_addr_str_t mac_str;
     mac_addr_str_t ap_mac_str;
@@ -546,6 +552,13 @@ typedef struct {
     unsigned int status_code;
     int dhcp_event;
     int dhcp_msg_type;
+    /* Extended fields for IPC event unification */
+    int rssi;                          /* RSSI at time of frame capture */
+    struct timespec frame_timestamp;   /* Capture timestamp (CLOCK_REALTIME) */
+    uint8_t frame_type;                /* LQ_FRAME_TYPE_PROBE/AUTH/ASSOC */
+    uint8_t vendor_ie_count;           /* Number of Vendor IEs in ie_data[] */
+    uint16_t ie_data_len;              /* Actual bytes used in ie_data[] */
+    uint8_t ie_data[MAX_STATS_IE_DATA_LEN]; /* TLV-encoded IEs: SSID, Supported Rates, Vendor IEs (max 4) */
 } stats_arg_t;
 
 typedef struct {

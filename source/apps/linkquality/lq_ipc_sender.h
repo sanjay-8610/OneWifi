@@ -32,13 +32,15 @@
  * PERIODIC_STATS   → add_stats_metrics() + periodic_caffinity_stats_update()
  * DISCONNECT       → remove_link_stats()
  * RAPID_DISCONNECT → disconnect_link_stats()
- * CAFFINITY_EVENT  → periodic_caffinity_stats_update() [single entry, HAL/DHCP]
+ * CAFFINITY_EVENT  → unified frame event (HAL/DHCP/probe/auth/assoc); frame_type
+ *                     in stats_arg_t selects WEI handling path
  * START_METRICS    → start_link_metrics() + set_max_snr_radios()
  * STOP_METRICS     → stop_link_metrics()
  * REGISTER_STA     → register_station_mac() [ignite]
  * UNREGISTER_STA   → unregister_station_mac() [ignite]
  * REINIT_METRICS   → reinit_link_metrics() [server_arg_t payload]
  * SET_MAX_SNR      → set_max_snr_radios() [radio_max_snr_t payload]
+ * ASSOC_REQ_DATA   → update caffinity with assoc request IEs [stats_arg_t payload]
  */
 #define LQ_IPC_MSG_PERIODIC_STATS    1
 #define LQ_IPC_MSG_DISCONNECT        2
@@ -51,35 +53,23 @@
 #define LQ_IPC_MSG_REINIT_METRICS    9
 #define LQ_IPC_MSG_SET_MAX_SNR      10
 #define LQ_IPC_MSG_SET_SCORE_PARAMS 11
-#define LQ_IPC_MSG_CORRELATION_STATS 12
+#define LQ_IPC_MSG_ASSOC_REQ_DATA   12  /* OneWifi → WEI: assoc req IEs on success (stats_arg_t) */
 #define LQ_IPC_MSG_DISCONNECT_CLIENTS_COUNT 13  /* WEI → OneWifi: disconnected client count */
-#define LQ_IPC_MSG_PROBE_AUTH_ASSOC_DATA    14  /* OneWifi → WEI: probe/auth/assoc frame data */
 
-/* Maximum buffer for IE TLV data (Vendor IE + SSID IE + Supported Rates IE) */
-#define MAX_IE_DATA_LEN 640
-
-/* Maximum number of Vendor IEs to extract and compare */
-#define MAX_VENDOR_IES 4
-
-/* IE IDs used in correlation */
+/* IE IDs used in TLV encoding */
 #define LQ_IE_ID_SSID            0
 #define LQ_IE_ID_SUPPORTED_RATES 1
 #define LQ_IE_ID_VENDOR_SPECIFIC 221
 
 /*
- * Payload for LQ_IPC_MSG_CORRELATION_STATS.
- * Sent by OneWifi after probe–association correlation completes.
- * ie_data contains extracted IEs from Association Request in raw TLV format (id + len + value).
- * All Vendor IEs (max 4) from the Assoc Request are included.
- * From the Probe Request, only the MAC address is used.
+ * Frame type identifiers stored in stats_arg_t.frame_type.
+ * LQ_FRAME_TYPE_NONE (0) = DHCP / periodic update, no 802.11 frame.
+ * Non-zero values carry a real 802.11 frame and trigger correlation on WEI.
  */
-typedef struct {
-    char     assoc_mac[18];           /* MAC of the associated/connected client */
-    char     probe_mac[18];           /* MAC of the correlated probe-request entry */
-    int      score;                   /* Final correlation score */
-    uint16_t ie_data_len;             /* Actual bytes used in ie_data[] */
-    uint8_t  ie_data[MAX_IE_DATA_LEN]; /* TLV-encoded IEs from Assoc Request: all Vendor IEs (max 4), SSID, Supported Rates */
-} lq_correlation_stats_t;
+#define LQ_FRAME_TYPE_NONE   0
+#define LQ_FRAME_TYPE_PROBE  1
+#define LQ_FRAME_TYPE_AUTH   2
+#define LQ_FRAME_TYPE_ASSOC  3
 
 /*
  * Payload for LQ_IPC_MSG_DISCONNECT_CLIENTS_COUNT (WEI → OneWifi).
@@ -88,27 +78,6 @@ typedef struct {
 typedef struct {
     uint8_t count;  /* Number of currently disconnected clients */
 } lq_disconnect_count_t;
-
-/*
- * Frame type identifiers for LQ_IPC_MSG_PROBE_AUTH_ASSOC_DATA.
- */
-#define LQ_FRAME_TYPE_PROBE  0
-#define LQ_FRAME_TYPE_AUTH   1
-#define LQ_FRAME_TYPE_ASSOC  2
-
-/*
- * Payload for LQ_IPC_MSG_PROBE_AUTH_ASSOC_DATA (OneWifi → WEI).
- * Sent when disconnected count > 0 to provide probe/auth/assoc details.
- * Includes all Vendor IEs (max 4) from the frame.
- */
-typedef struct {
-    uint8_t  frame_type;               /* LQ_FRAME_TYPE_PROBE/AUTH/ASSOC */
-    char     mac[18];                  /* Source MAC address */
-    uint8_t  vap_index;               /* VAP index where frame was received */
-    uint16_t ie_data_len;             /* Bytes used in ie_data[] (0 for auth) */
-    uint8_t  ie_data[MAX_IE_DATA_LEN]; /* All Vendor IE TLVs (max 4, if available) */
-    uint8_t  vendor_ie_count;          /* Number of Vendor IEs in ie_data[] */
-} lq_probe_auth_assoc_data_t;
 
 /*
  * LQ TLV — the entire datagram is a single TLV, no wrapper header.
