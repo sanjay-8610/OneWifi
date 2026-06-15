@@ -618,6 +618,165 @@ int exec_event_webconfig_event(wifi_app_t *apps, wifi_event_t *event)
     return RETURN_OK;
 }
 
+/**
+ * parse_and_store_ies - Parse a raw 802.11 IE buffer and store a filtered,
+ * deterministically ordered subset into dst.
+ *
+ * Only SSID (tag 0), Supported Rates (tag 1), and up to MAX_VENDOR_IES_FOR_FP
+ * Vendor Specific IEs (tag 221) are retained. Vendor IEs with OUI 00:50:F2
+ * type 1 (WPA) or type 4 (WPS) are dropped.
+ * Output order is always: SSID → Supported Rates → Vendor IEs, regardless
+ * of the order they appear in the frame, ensuring deterministic hashing.
+ *
+ * @src      Raw IE bytes from the frame body.
+ * @src_len  Length of src in bytes.
+ * @dst      Output buffer (ie_data field of stats_arg_t).
+ * @dst_max  Capacity of dst (MAX_IE_DATA_LEN).
+ * @return   Number of bytes written to dst.
+ */
+#define MAX_VENDOR_IES_FOR_FP 4
+static uint16_t parse_and_store_ies(const uint8_t *src, uint16_t src_len,
+                                     uint8_t *dst, uint16_t dst_max)
+{
+    uint8_t  ssid_buf[257]        = {0}; /* tag(1)+len(1)+up-to-255 */
+    uint16_t ssid_total           = 0;
+    uint8_t  rates_buf[257]       = {0};
+    uint16_t rates_total          = 0;
+    uint8_t  vendor_buf[MAX_IE_DATA_LEN];
+    uint16_t vendor_total         = 0;
+    int      vendor_count         = 0;
+    uint16_t offset               = 0;
+
+    while (offset + 2 <= src_len) {
+        uint8_t tag = src[offset];
+        uint8_t len = src[offset + 1];
+
+        if (offset + 2 + len > src_len) {
+            break;
+        }
+
+        if (tag == 0) { /* SSID */
+            if (ssid_total == 0 && (2 + len) <= (uint16_t)sizeof(ssid_buf)) {
+                ssid_buf[0] = tag;
+                ssid_buf[1] = len;
+                memcpy(&ssid_buf[2], &src[offset + 2], len);
+                ssid_total = 2 + len;
+            }
+        } else if (tag == 1) { /* Supported Rates */
+            if (rates_total == 0 && (2 + len) <= (uint16_t)sizeof(rates_buf)) {
+                rates_buf[0] = tag;
+                rates_buf[1] = len;
+                memcpy(&rates_buf[2], &src[offset + 2], len);
+                rates_total = 2 + len;
+            }
+        } else if (tag == 221 && vendor_count < MAX_VENDOR_IES_FOR_FP) { /* Vendor Specific */
+            /* Skip OUI 00:50:F2 type 1 (WPA) or type 4 (WPS) */
+            if (len >= 4) {
+                const uint8_t *oui = &src[offset + 2];
+                if (oui[0] == 0x00 && oui[1] == 0x50 && oui[2] == 0xF2 &&
+                    (oui[3] == 1 || oui[3] == 4)) {
+                    offset += 2 + len;
+                    continue;
+                }
+            }
+            if ((vendor_total + 2 + len) <= (uint16_t)sizeof(vendor_buf)) {
+                vendor_buf[vendor_total]     = tag;
+                vendor_buf[vendor_total + 1] = len;
+                memcpy(&vendor_buf[vendor_total + 2], &src[offset + 2], len);
+                vendor_total += 2 + len;
+                vendor_count++;
+            }
+        }
+        offset += 2 + len;
+    }
+
+    /* Write in deterministic order: SSID → Supported Rates → Vendor IEs */
+    uint16_t written = 0;
+    if (ssid_total > 0 && (written + ssid_total) <= dst_max) {
+        memcpy(&dst[written], ssid_buf, ssid_total);
+        written += ssid_total;
+    }
+    if (rates_total > 0 && (written + rates_total) <= dst_max) {
+        memcpy(&dst[written], rates_buf, rates_total);
+        written += rates_total;
+    }
+    if (vendor_total > 0 && (written + vendor_total) <= dst_max) {
+        memcpy(&dst[written], vendor_buf, vendor_total);
+        written += vendor_total;
+    }
+    return written;
+}
+
+/*
+ * Extract the 802.11 sequence number from the management frame header.
+ * seq_ctrl (little-endian 16-bit): bits[15:4] = sequence number, bits[3:0] = fragment.
+ * Sequence number wraps at LQ_SEQNUM_MAX (4096).
+ */
+static uint16_t lq_extract_seq_num(frame_data_t *msg)
+{
+    if (msg->frame.len < 24)
+        return 0;
+    const struct ieee80211_mgmt *mgmt = (const struct ieee80211_mgmt *)msg->data;
+    uint16_t seq_ctrl = le_to_host16(mgmt->seq_ctrl);
+    return (seq_ctrl >> 4) & 0x0FFF;
+}
+
+int link_quality_probe_req_event(wifi_app_t *app, void *arg)
+{
+    wifi_util_dbg_print(WIFI_APPS, "Enter %s:%d\n", __func__, __LINE__);
+    if (!arg) {
+        wifi_util_error_print(WIFI_CTRL, "%s:%d NULL arg\n", __func__, __LINE__);
+        return RETURN_ERR;
+    }
+
+    frame_data_t *msg = (frame_data_t *)arg;
+
+    stats_arg_t *affinity_arg = (stats_arg_t *)malloc(sizeof(stats_arg_t));
+    if (affinity_arg == NULL) {
+        wifi_util_error_print(WIFI_APPS, "%s:%d unable to alloc memory\n", __func__, __LINE__);
+        return RETURN_ERR;
+    }
+
+    memset(affinity_arg, 0, sizeof(stats_arg_t));
+    to_mac_str(msg->frame.sta_mac, affinity_arg->mac_str);
+
+    /* Filter: drop events except private VAPs (private_ssid*) */
+    wifi_mgr_t *mgr = get_wifimgr_obj();
+    if (mgr != NULL) {
+        if (is_vap_private(&mgr->hal_cap.wifi_prop, msg->frame.ap_index) != TRUE) {
+            wifi_util_info_print(WIFI_APPS,
+                "%s:%d dropping MAC: %s: vap_index=%u is not a private VAP\n",
+                __func__, __LINE__, affinity_arg->mac_str, msg->frame.ap_index);
+            free(affinity_arg);
+            return 0;
+        }
+    }
+    affinity_arg->vap_index = msg->frame.ap_index;
+    affinity_arg->radio_index = getRadioIndexFromAp(msg->frame.ap_index);
+    get_radio_channel_utilization(affinity_arg->radio_index, &affinity_arg->channel_utilization);
+
+    affinity_arg->frame_type = LQ_FRAME_TYPE_PROBE_REQ;
+    affinity_arg->rssi = msg->frame.sig_dbm;
+    affinity_arg->seq_number = lq_extract_seq_num(msg);
+    clock_gettime(CLOCK_MONOTONIC, &affinity_arg->frame_timestamp);
+    affinity_arg->event = wifi_event_hal_probe_req_frame;
+
+    /* Parse only SSID, Supported Rates, and filtered Vendor IEs in deterministic order */
+    if (msg->frame.len > 0) {
+        affinity_arg->ie_data_len = parse_and_store_ies(
+            msg->data, (uint16_t)msg->frame.len,
+            affinity_arg->ie_data, MAX_IE_DATA_LEN);
+        wifi_util_dbg_print(WIFI_APPS,
+            "%s:%d Parsed %u bytes of IE data for PROBE_REQ MAC=%s\n",
+            __func__, __LINE__, affinity_arg->ie_data_len, affinity_arg->mac_str);
+    }
+
+    get_lq_descriptor()->periodic_caffinity_stats_update_fn(affinity_arg, 1);
+
+    free(affinity_arg);
+    return RETURN_OK;
+}
+
 int link_quality_apps_auth_event(wifi_app_t *app, bool req, int sub_event,void *arg)
 {
     stats_arg_t *affinity_arg = NULL;
@@ -639,12 +798,42 @@ int link_quality_apps_auth_event(wifi_app_t *app, bool req, int sub_event,void *
     memset(affinity_arg, 0, sizeof(stats_arg_t));
     
     to_mac_str(msg->frame.sta_mac, affinity_arg->mac_str);
+    /* Filter: drop events except private VAPs (private_ssid*) */
+    wifi_mgr_t *mgr = get_wifimgr_obj();
+    if (mgr != NULL) {
+        if (is_vap_private(&mgr->hal_cap.wifi_prop, msg->frame.ap_index) != TRUE) {
+            wifi_util_info_print(WIFI_APPS,
+                "%s:%d dropping MAC: %s: vap_index=%u is not a private VAP\n",
+                __func__, __LINE__, affinity_arg->mac_str, msg->frame.ap_index);
+            free(affinity_arg);
+            return 0;
+        }
+    }
+
     affinity_arg->vap_index = msg->frame.ap_index;
     affinity_arg->radio_index = getRadioIndexFromAp(msg->frame.ap_index);
     get_radio_channel_utilization(affinity_arg->radio_index,&affinity_arg->channel_utilization);
     affinity_arg->status_code = 0;
     // dhcp_event = 0 (not a DHCP update) from memset
-    
+
+    /* Classify auth frame type: SEQ1 vs other */
+    affinity_arg->frame_type = LQ_FRAME_TYPE_AUTH;
+    if (msg->frame.len >= 4) {
+        /* Auth frame body: auth_alg(2) + auth_seq(2) + status(2) + ... */
+        uint16_t auth_seq_number = (uint16_t)(msg->data[2] | (msg->data[3] << 8));
+        wifi_util_info_print(WIFI_APPS, "%s:%d AUTH frame auth_seq=%u MAC=%s\n",
+            __func__, __LINE__, auth_seq_number, affinity_arg->mac_str);
+        if (auth_seq_number == 1) {
+            affinity_arg->frame_type = LQ_FRAME_TYPE_AUTH_SEQ1;
+        }
+    }
+
+    affinity_arg->rssi = msg->frame.sig_dbm;
+    affinity_arg->seq_number = lq_extract_seq_num(msg);
+    clock_gettime(CLOCK_MONOTONIC, &affinity_arg->frame_timestamp);
+    /* Do NOT copy IE data for auth frames */
+    affinity_arg->ie_data_len = 0;
+
     if (req)   {
         affinity_arg->event = sub_event;
         get_lq_descriptor()->periodic_caffinity_stats_update_fn(affinity_arg, 1);
@@ -672,13 +861,51 @@ int link_quality_apps_assoc_event(wifi_app_t *app, bool req,int sub_event,void *
     
     // Populate MAC address from frame
     to_mac_str(msg->frame.sta_mac, affinity_arg->mac_str);
+
+    /* Filter: drop events except private VAPs (private_ssid*) */
+    wifi_mgr_t *mgr = get_wifimgr_obj();
+    if (mgr != NULL) {
+        if (is_vap_private(&mgr->hal_cap.wifi_prop, msg->frame.ap_index) != TRUE) {
+            wifi_util_info_print(WIFI_APPS,
+                "%s:%d dropping MAC: %s: vap_index=%u is not a private VAP\n",
+                __func__, __LINE__, affinity_arg->mac_str, msg->frame.ap_index);
+            free(affinity_arg);
+            return 0;
+        }
+    }
+
     affinity_arg->vap_index = msg->frame.ap_index;
     affinity_arg->radio_index = getRadioIndexFromAp(msg->frame.ap_index);
     get_radio_channel_utilization(affinity_arg->radio_index, &affinity_arg->channel_utilization);
-    
+
+    /* Populate frame metadata */
+    affinity_arg->rssi = msg->frame.sig_dbm;
+    affinity_arg->seq_number = lq_extract_seq_num(msg);
+    clock_gettime(CLOCK_MONOTONIC, &affinity_arg->frame_timestamp);
+
     // dhcp_event = 0 (not a DHCP update) from memset
     if (req)   {
         affinity_arg->event = sub_event;
+
+        /* Classify frame type and copy IEs for assoc/reassoc requests */
+        if ((sub_event == wifi_event_hal_assoc_req_frame) || (sub_event == wifi_event_hal_reassoc_req_frame)) {
+            affinity_arg->frame_type = LQ_FRAME_TYPE_ASSOC_REQ;
+
+            /* Assoc Req body: capability(2) + listen_interval(2) + IEs
+             * Reassoc Req body: capability(2) + listen_interval(2) + current_ap(6) + IEs
+             * Parse only SSID, Supported Rates, and filtered Vendor IEs in deterministic order. */
+            unsigned int ie_offset = (sub_event == wifi_event_hal_reassoc_req_frame) ? 10 : 4;
+            if (msg->frame.len > ie_offset) {
+                affinity_arg->ie_data_len = parse_and_store_ies(
+                    &msg->data[ie_offset],
+                    (uint16_t)(msg->frame.len - ie_offset),
+                    affinity_arg->ie_data, MAX_IE_DATA_LEN);
+                wifi_util_dbg_print(WIFI_APPS,
+                    "%s:%d Parsed %u bytes of IE data for ASSOC_REQ MAC=%s\n",
+                    __func__, __LINE__, affinity_arg->ie_data_len, affinity_arg->mac_str);
+            }
+        }
+
         get_lq_descriptor()->periodic_caffinity_stats_update_fn(affinity_arg, 1);
     } else {
         // Check sub_event for wifi_event_hal_assoc_rsp_frame OR wifi_event_hal_reassoc_rsp_frame
@@ -694,6 +921,9 @@ int link_quality_apps_assoc_event(wifi_app_t *app, bool req,int sub_event,void *
             }
             affinity_arg->event = sub_event;
             affinity_arg->status_code = status;
+            affinity_arg->frame_type = LQ_FRAME_TYPE_ASSOC_RES;
+            /* Do NOT copy IE data for assoc response */
+            affinity_arg->ie_data_len = 0;
 
             // if Status is success add AP mac address into stats_arg_t
             if (status == 0) {
@@ -735,6 +965,17 @@ int link_quality_apps_disassoc_event(wifi_app_t *app, bool req,int sub_event,voi
     
     memset(affinity_arg, 0, sizeof(stats_arg_t));
     to_mac_str(msg->frame.sta_mac, affinity_arg->mac_str);
+    /* Filter: drop events except private VAPs (private_ssid*) */
+    wifi_mgr_t *mgr = get_wifimgr_obj();
+    if (mgr != NULL) {
+        if (is_vap_private(&mgr->hal_cap.wifi_prop, msg->frame.ap_index) != TRUE) {
+            wifi_util_info_print(WIFI_APPS,
+                "%s:%d dropping MAC: %s: vap_index=%u is not a private VAP\n",
+                __func__, __LINE__, affinity_arg->mac_str, msg->frame.ap_index);
+            free(affinity_arg);
+            return 0;
+        }
+    }
     affinity_arg->vap_index = msg->frame.ap_index;
     affinity_arg->radio_index = getRadioIndexFromAp(msg->frame.ap_index);
     get_radio_channel_utilization(affinity_arg->radio_index, &affinity_arg->channel_utilization);
@@ -807,7 +1048,10 @@ int exec_event_hal_ind(wifi_app_t *apps, wifi_event_subtype_t sub_type, void *ar
             wifi_util_info_print(WIFI_APPS," %s:%d event = %d\n",__func__,__LINE__,sub_type);
             link_quality_apps_disassoc_event(apps,true,sub_type,arg);
             break;
-        
+        case wifi_event_hal_probe_req_frame:
+            wifi_util_dbg_print(WIFI_APPS, " %s:%d probe event = %d\n", __func__, __LINE__, sub_type);
+            link_quality_probe_req_event(apps, arg);
+            break;
         default:
             wifi_util_dbg_print(WIFI_APPS, "%s:%d: event not handle %s\r\n", __func__, __LINE__,
             wifi_event_subtype_to_string(sub_type));

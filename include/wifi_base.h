@@ -549,6 +549,18 @@ typedef struct {
     link_report_t *links;
 } report_batch_t;
 
+#define MAX_IE_DATA_LEN 1024
+
+typedef enum {
+    LQ_FRAME_TYPE_NONE       = 0,
+    LQ_FRAME_TYPE_PROBE_REQ  = 1,
+    LQ_FRAME_TYPE_AUTH_SEQ1  = 2,
+    LQ_FRAME_TYPE_AUTH       = 3,
+    LQ_FRAME_TYPE_ASSOC_REQ  = 4,
+    LQ_FRAME_TYPE_ASSOC_RES  = 5,
+    LQ_FRAME_UNKNOWN         = 0xFF
+} lq_frame_type_t;
+
 typedef struct {
     mac_addr_str_t mac_str;
     mac_addr_str_t ap_mac_str;
@@ -565,6 +577,12 @@ typedef struct {
     char dhcp_hostname[64];      /* Option 12 — parsed on DISCOVER/REQUEST */
     char dhcp_vendor_class[128]; /* Option 60 — parsed on DISCOVER/REQUEST */
     char dhcp_param_list[128];   /* Option 55 — parsed on DISCOVER/REQUEST */
+    uint8_t frame_type;
+    int rssi;
+    uint16_t seq_number;
+    struct timespec frame_timestamp;
+    uint16_t ie_data_len;
+    uint8_t ie_data[MAX_IE_DATA_LEN];
 } stats_arg_t;
 
 typedef struct {
