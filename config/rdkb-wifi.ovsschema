@@ -1916,7 +1916,25 @@
             "max": 1
           }
         },
-        "link_quality_rfc": {
+        "wei_wc_rfc": {
+          "type": {
+            "key": {
+              "type": "boolean"
+            },
+            "min": 0,
+            "max": 1
+          }
+        },
+        "wei_sc_rfc": {
+          "type": {
+            "key": {
+              "type": "boolean"
+            },
+            "min": 0,
+            "max": 1
+          }
+        },
+        "wei_gc_rfc": {
           "type": {
             "key": {
               "type": "boolean"
