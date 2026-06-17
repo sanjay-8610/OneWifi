@@ -708,6 +708,35 @@ static uint16_t parse_and_store_ies(const uint8_t *src, uint16_t src_len,
 }
 
 /*
+ * lq_fill_ap_mac_from_vap - populate ap_mac_str from the VAP's BSS info.
+ *
+ * Source: getVapInfo(vap_index)->u.bss_info.bssid.
+ *
+ * Used ONLY for Probe Request frames.  For all other management frame types
+ * (Auth, Assoc REQ, Assoc RSP) the AP BSSID can be read directly from
+ * bytes 16-21 of the 802.11 MAC header present in msg->data.  Probe REQ is
+ * the exception because the 802.11 BSSID field in a probe request is set to
+ * ff:ff:ff:ff:ff:ff (broadcast), so the frame itself cannot tell us which AP
+ * received it — we must fall back to the VAP context.
+ *
+ * Returns true on success and fills out_ap_mac_str; returns false if
+ * getVapInfo() returns NULL (should not happen on a running AP).
+ */
+static bool lq_fill_ap_mac_from_vap(unsigned int vap_index,
+                                     mac_addr_str_t out_ap_mac_str)
+{
+    wifi_vap_info_t *vap_info = getVapInfo(vap_index);
+    if (vap_info == NULL) {
+        wifi_util_error_print(WIFI_APPS,
+            "%s:%d getVapInfo returned NULL for vap_index=%u — ap_mac_str not set\n",
+            __func__, __LINE__, vap_index);
+        return false;
+    }
+    to_mac_str(vap_info->u.bss_info.bssid, out_ap_mac_str);
+    return true;
+}
+
+/*
  * Extract the 802.11 sequence number from the management frame header.
  * seq_ctrl (little-endian 16-bit): bits[15:4] = sequence number, bits[3:0] = fragment.
  * Sequence number wraps at LQ_SEQNUM_MAX (4096).
@@ -755,20 +784,40 @@ int link_quality_probe_req_event(wifi_app_t *app, void *arg)
     affinity_arg->radio_index = getRadioIndexFromAp(msg->frame.ap_index);
     get_radio_channel_utilization(affinity_arg->radio_index, &affinity_arg->channel_utilization);
 
+    /*
+     * Probe REQ: HAL receiver address is ff:ff:ff:ff:ff:ff (broadcast).
+     * Use the VAP's BSS info to obtain the real AP BSSID.
+     */
+    if (lq_fill_ap_mac_from_vap(msg->frame.ap_index, affinity_arg->ap_mac_str)) {
+        wifi_util_dbg_print(WIFI_APPS,
+            "%s:%d PROBE_REQ ap_mac_str=%s (from VAP bss_info) STA=%s vap=%u\n",
+            __func__, __LINE__, affinity_arg->ap_mac_str,
+            affinity_arg->mac_str, affinity_arg->vap_index);
+    }
+
     affinity_arg->frame_type = LQ_FRAME_TYPE_PROBE_REQ;
     affinity_arg->rssi = msg->frame.sig_dbm;
     affinity_arg->seq_number = lq_extract_seq_num(msg);
     clock_gettime(CLOCK_MONOTONIC, &affinity_arg->frame_timestamp);
     affinity_arg->event = wifi_event_hal_probe_req_frame;
 
-    /* Parse only SSID, Supported Rates, and filtered Vendor IEs in deterministic order */
-    if (msg->frame.len > 0) {
-        affinity_arg->ie_data_len = parse_and_store_ies(
-            msg->data, (uint16_t)msg->frame.len,
-            affinity_arg->ie_data, MAX_IE_DATA_LEN);
-        wifi_util_dbg_print(WIFI_APPS,
-            "%s:%d Parsed %u bytes of IE data for PROBE_REQ MAC=%s\n",
-            __func__, __LINE__, affinity_arg->ie_data_len, affinity_arg->mac_str);
+    /*
+     * IEs start at the 802.11 frame body — i.e., after the 24-byte MAC header
+     * (offsetof(struct ieee80211_mgmt, u) == 24).  For a Probe REQ the body
+     * contains IEs directly with no intervening fixed fields.
+     * Parse only SSID, Supported Rates, and filtered Vendor IEs in
+     * deterministic order.
+     */
+    {
+        const unsigned int ie_offset = (unsigned int)offsetof(struct ieee80211_mgmt, u);
+        if (msg->frame.len > ie_offset) {
+            affinity_arg->ie_data_len = parse_and_store_ies(
+                &msg->data[ie_offset], (uint16_t)(msg->frame.len - ie_offset),
+                affinity_arg->ie_data, MAX_IE_DATA_LEN);
+            wifi_util_dbg_print(WIFI_APPS,
+                "%s:%d Parsed %u bytes of IE data for PROBE_REQ MAC=%s\n",
+                __func__, __LINE__, affinity_arg->ie_data_len, affinity_arg->mac_str);
+        }
     }
 
     get_lq_descriptor()->periodic_caffinity_stats_update_fn(affinity_arg, 1);
@@ -816,11 +865,43 @@ int link_quality_apps_auth_event(wifi_app_t *app, bool req, int sub_event,void *
     affinity_arg->status_code = 0;
     // dhcp_event = 0 (not a DHCP update) from memset
 
-    /* Classify auth frame type: SEQ1 vs other */
+    /*
+     * msg->data holds the full 802.11 frame (MAC header + body).
+     * 802.11 management MAC header layout (all frame types):
+     *   bytes  0- 1: frame_control
+     *   bytes  2- 3: duration
+     *   bytes  4- 9: DA  (destination address)
+     *   bytes 10-15: SA  (source address)
+     *   bytes 16-21: BSSID  ← AP MAC for Auth (STA→AP direction)
+     *   bytes 22-23: seq_ctrl
+     *   bytes 24+  : frame-type-specific body
+     *
+     * BSSID is extracted directly from the 802.11 header. The minimum frame
+     * size check (offsetof struct ieee80211_mgmt, u) == 24 bytes) covers it.
+     */
+    if (msg->frame.len >= (unsigned int)offsetof(struct ieee80211_mgmt, u)) {
+        const struct ieee80211_mgmt *mgmt = (const struct ieee80211_mgmt *)msg->data;
+        to_mac_str((unsigned char *)mgmt->bssid, affinity_arg->ap_mac_str);
+        wifi_util_dbg_print(WIFI_APPS,
+            "%s:%d AUTH ap_mac_str=%s (from 802.11 header BSSID) STA=%s vap=%u\n",
+            __func__, __LINE__, affinity_arg->ap_mac_str,
+            affinity_arg->mac_str, affinity_arg->vap_index);
+    } else {
+        wifi_util_error_print(WIFI_APPS,
+            "%s:%d AUTH frame too short (len=%u) to read BSSID — ap_mac_str left empty\n",
+            __func__, __LINE__, msg->frame.len);
+    }
+
+    /* Classify auth frame type: SEQ1 vs other.
+     * Auth frame body starts at byte 24 (after the 802.11 MAC header):
+     *   bytes 24-25: auth_alg
+     *   bytes 26-27: auth_transaction  ← this is the "sequence number" (1, 2, 3...)
+     *   bytes 28-29: status_code
+     * NOTE: do NOT use msg->data[2]/[3] — those are the duration field. */
     affinity_arg->frame_type = LQ_FRAME_TYPE_AUTH;
-    if (msg->frame.len >= 4) {
-        /* Auth frame body: auth_alg(2) + auth_seq(2) + status(2) + ... */
-        uint16_t auth_seq_number = (uint16_t)(msg->data[2] | (msg->data[3] << 8));
+    if (msg->frame.len >= (unsigned int)(offsetof(struct ieee80211_mgmt, u) + 4)) {
+        const struct ieee80211_mgmt *mgmt = (const struct ieee80211_mgmt *)msg->data;
+        uint16_t auth_seq_number = le_to_host16(mgmt->u.auth.auth_transaction);
         wifi_util_info_print(WIFI_APPS, "%s:%d AUTH frame auth_seq=%u MAC=%s\n",
             __func__, __LINE__, auth_seq_number, affinity_arg->mac_str);
         if (auth_seq_number == 1) {
@@ -878,6 +959,31 @@ int link_quality_apps_assoc_event(wifi_app_t *app, bool req,int sub_event,void *
     affinity_arg->radio_index = getRadioIndexFromAp(msg->frame.ap_index);
     get_radio_channel_utilization(affinity_arg->radio_index, &affinity_arg->channel_utilization);
 
+    /*
+     * Extract AP BSSID from bytes 16-21 of the 802.11 MAC header embedded in
+     * msg->data (the full frame, MAC header + body, is always present).
+     *
+     * 802.11 management MAC header layout:
+     *   bytes  4- 9: DA     (destination)
+     *   bytes 10-15: SA     (source = STA MAC for REQ, AP MAC for RSP)
+     *   bytes 16-21: BSSID  (AP MAC for both REQ and RSP directions)
+     *
+     * This applies to Assoc REQ (STA→AP) and Assoc RSP (AP→STA) alike;
+     * the BSSID field always contains the AP address regardless of direction.
+     */
+    if (msg->frame.len >= (unsigned int)offsetof(struct ieee80211_mgmt, u)) {
+        const struct ieee80211_mgmt *mgmt80211 = (const struct ieee80211_mgmt *)msg->data;
+        to_mac_str((unsigned char *)mgmt80211->bssid, affinity_arg->ap_mac_str);
+        wifi_util_dbg_print(WIFI_APPS,
+            "%s:%d ASSOC ap_mac_str=%s (from 802.11 header BSSID) STA=%s vap=%u sub_event=%d\n",
+            __func__, __LINE__, affinity_arg->ap_mac_str,
+            affinity_arg->mac_str, affinity_arg->vap_index, sub_event);
+    } else {
+        wifi_util_error_print(WIFI_APPS,
+            "%s:%d ASSOC frame too short (len=%u) to read BSSID — ap_mac_str left empty\n",
+            __func__, __LINE__, msg->frame.len);
+    }
+
     /* Populate frame metadata */
     affinity_arg->rssi = msg->frame.sig_dbm;
     affinity_arg->seq_number = lq_extract_seq_num(msg);
@@ -891,10 +997,16 @@ int link_quality_apps_assoc_event(wifi_app_t *app, bool req,int sub_event,void *
         if ((sub_event == wifi_event_hal_assoc_req_frame) || (sub_event == wifi_event_hal_reassoc_req_frame)) {
             affinity_arg->frame_type = LQ_FRAME_TYPE_ASSOC_REQ;
 
-            /* Assoc Req body: capability(2) + listen_interval(2) + IEs
-             * Reassoc Req body: capability(2) + listen_interval(2) + current_ap(6) + IEs
-             * Parse only SSID, Supported Rates, and filtered Vendor IEs in deterministic order. */
-            unsigned int ie_offset = (sub_event == wifi_event_hal_reassoc_req_frame) ? 10 : 4;
+            /*
+             * IEs start after the 802.11 MAC header (24 bytes) + the
+             * fixed-length frame body fields:
+             *   Assoc REQ:   24 (hdr) + 2 (capab) + 2 (listen_interval) = 28
+             *   Reassoc REQ: 24 (hdr) + 2 (capab) + 2 (listen_interval)
+             *                        + 6 (current_ap)                    = 34
+             * Parse only SSID, Supported Rates, and filtered Vendor IEs
+             * in deterministic order.
+             */
+            unsigned int ie_offset = (sub_event == wifi_event_hal_reassoc_req_frame) ? 34 : 28;
             if (msg->frame.len > ie_offset) {
                 affinity_arg->ie_data_len = parse_and_store_ies(
                     &msg->data[ie_offset],
@@ -910,9 +1022,20 @@ int link_quality_apps_assoc_event(wifi_app_t *app, bool req,int sub_event,void *
     } else {
         // Check sub_event for wifi_event_hal_assoc_rsp_frame OR wifi_event_hal_reassoc_rsp_frame
         if ((sub_event == wifi_event_hal_assoc_rsp_frame) || (sub_event == wifi_event_hal_reassoc_rsp_frame)) {
-            struct ieee80211_mgmt *frame = (struct ieee80211_mgmt *)&msg->data;
+            /*
+             * Cast msg->data (not &msg->data) to ieee80211_mgmt*.  Both forms
+             * resolve to the same address, but msg->data is the correct idiom
+             * for an embedded array field.
+             * ap_mac_str was already set from mgmt80211->bssid above (shared
+             * with the REQ path).  Log it unconditionally so it is visible for
+             * both success and failure cases.
+             */
+            const struct ieee80211_mgmt *frame = (const struct ieee80211_mgmt *)msg->data;
             uint16_t status = le_to_host16(frame->u.assoc_resp.status_code);
-            wifi_util_info_print(WIFI_CTRL," %s:%d wifi_event_hal_assoc_rsp_frame status_code=%d\n", __func__, __LINE__, status);
+            wifi_util_info_print(WIFI_CTRL,
+                "%s:%d ASSOC RSP status=%u ap_mac_str=%s STA=%s (BSSID from 802.11 header)\n",
+                __func__, __LINE__, status,
+                affinity_arg->ap_mac_str, affinity_arg->mac_str);
             if (status != 0) {
                 wifi_util_error_print(WIFI_CTRL,
                     "CAFF %s:%d ASSOC FAILURE MAC=%s sub_event=%d status_code=%u vap=%u radio=%u\n",
@@ -924,21 +1047,10 @@ int link_quality_apps_assoc_event(wifi_app_t *app, bool req,int sub_event,void *
             affinity_arg->frame_type = LQ_FRAME_TYPE_ASSOC_RES;
             /* Do NOT copy IE data for assoc response */
             affinity_arg->ie_data_len = 0;
-
-            // if Status is success add AP mac address into stats_arg_t
-            if (status == 0) {
-                wifi_vap_info_t *vap_info = NULL;
-                vap_info = getVapInfo(msg->frame.ap_index);
-                if (vap_info != NULL) {
-                    to_mac_str(vap_info->u.bss_info.bssid, affinity_arg->ap_mac_str);
-                    wifi_util_info_print(WIFI_CTRL," RMS %s:%d AP BSSID: %s for STA: %s\n",
-                        __func__, __LINE__, affinity_arg->ap_mac_str, affinity_arg->mac_str);
-                }
-
-            }
-            wifi_util_info_print(WIFI_CTRL, " %s:%d Calling get_lq_descriptor()->periodic_caffinity_stats_update_fn for MAC %s, event=%d, status=%d\n",
+            wifi_util_info_print(WIFI_CTRL,
+                "%s:%d Calling periodic_caffinity_stats_update_fn MAC=%s event=%d status=%u\n",
                 __func__, __LINE__, affinity_arg->mac_str, sub_event, status);
-            get_lq_descriptor()->periodic_caffinity_stats_update_fn(affinity_arg,1);
+            get_lq_descriptor()->periodic_caffinity_stats_update_fn(affinity_arg, 1);
         }
     }
     free(affinity_arg);
