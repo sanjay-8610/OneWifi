@@ -549,7 +549,7 @@ typedef struct {
     link_report_t *links;
 } report_batch_t;
 
-#define MAX_IE_DATA_LEN 1024
+#define MAX_IE_DATA_LEN 512
 
 typedef enum {
     LQ_FRAME_TYPE_NONE       = 0,

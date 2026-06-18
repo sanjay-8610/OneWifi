@@ -704,6 +704,84 @@ static uint16_t parse_and_store_ies(const uint8_t *src, uint16_t src_len,
         memcpy(&dst[written], vendor_buf, vendor_total);
         written += vendor_total;
     }
+
+    /* ----- Debug: summarise which IEs were stored ----- */
+    wifi_util_dbg_print(WIFI_APPS,
+        "parse_and_store_ies: copied IEs: SSID=%s(%u B) Rates=%s(%u B) Vendor=%d IE(s)(%u B) total=%u B\n",
+        ssid_total  ? "YES" : "NO",  ssid_total,
+        rates_total ? "YES" : "NO",  rates_total,
+        vendor_count, vendor_total,
+        written);
+
+    /* ----- Debug: human-readable dump of every stored IE ----- */
+    {
+        uint16_t off = 0;
+        int      ie_num = 0;
+        wifi_util_dbg_print(WIFI_APPS,
+            "------------------------------------------------------------------\n"
+            "parse_and_store_ies: IE dump (%u bytes total)\n"
+            "------------------------------------------------------------------\n"
+            "  #   ID   LEN   CONTENT\n"
+            "  ----+----+-----+-------------------------------------------------\n");
+        while (off + 2 <= written) {
+            uint8_t  id  = dst[off];
+            uint8_t  len = dst[off + 1];
+            if (off + 2 + len > written)
+                break;
+            ++ie_num;
+            if (id == 0) {
+                /* SSID — printable UTF-8 string */
+                char ssid_str[256] = {0};
+                uint8_t slen = (len < 255) ? len : 254;
+                memcpy(ssid_str, &dst[off + 2], slen);
+                ssid_str[slen] = '\0';
+                wifi_util_dbg_print(WIFI_APPS,
+                    "  %-3d  %-3u  %-4u  SSID=\"%s\"\n",
+                    ie_num, id, len, ssid_str);
+            } else if (id == 1) {
+                /* Supported Rates — each byte encodes a rate */
+                char rbuf[256] = {0};
+                int  rpos = 0;
+                for (uint8_t r = 0; r < len && rpos < (int)sizeof(rbuf) - 8; r++) {
+                    bool basic = (dst[off + 2 + r] & 0x80) != 0;
+                    double mbps = (dst[off + 2 + r] & 0x7F) * 0.5;
+                    rpos += snprintf(rbuf + rpos, sizeof(rbuf) - rpos,
+                                     "%.1f%s%s", mbps,
+                                     basic ? "*" : "",
+                                     r + 1 < len ? " " : "");
+                }
+                wifi_util_dbg_print(WIFI_APPS,
+                    "  %-3d  %-3u  %-4u  SupportedRates=[%s]\n",
+                    ie_num, id, len, rbuf);
+            } else if (id == 221) {
+                /* Vendor Specific — first 3 B = OUI, 4th = type */
+                if (len >= 4) {
+                    const uint8_t *d = &dst[off + 2];
+                    char hbuf[256] = {0};
+                    int  hpos = 0;
+                    for (uint8_t b = 4; b < len && hpos < (int)sizeof(hbuf) - 4; b++) {
+                        hpos += snprintf(hbuf + hpos, sizeof(hbuf) - hpos,
+                                         "%02x ", d[b]);
+                    }
+                    wifi_util_dbg_print(WIFI_APPS,
+                        "  %-3d  %-3u  %-4u  VendorSpecific OUI=%02x:%02x:%02x type=0x%02x data=[%s]\n",
+                        ie_num, id, len, d[0], d[1], d[2], d[3], hbuf);
+                } else {
+                    wifi_util_dbg_print(WIFI_APPS,
+                        "  %-3d  %-3u  %-4u  VendorSpecific (short len)\n",
+                        ie_num, id, len);
+                }
+            } else {
+                wifi_util_dbg_print(WIFI_APPS,
+                    "  %-3d  %-3u  %-4u  (raw)\n",
+                    ie_num, id, len);
+            }
+            off += 2 + len;
+        }
+        wifi_util_dbg_print(WIFI_APPS,
+            "------------------------------------------------------------------\n");
+    }
+
     return written;
 }
 
