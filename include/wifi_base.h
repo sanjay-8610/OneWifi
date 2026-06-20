@@ -550,6 +550,7 @@ typedef struct {
 } report_batch_t;
 
 #define MAX_IE_DATA_LEN 512
+#define MAX_IE_ORDER_LEN 128   /* "0-1-50-45-48-127-221-191-255:35\0" */
 
 typedef enum {
     LQ_FRAME_TYPE_NONE       = 0,
@@ -583,6 +584,9 @@ typedef struct {
     struct timespec frame_timestamp;
     uint16_t ie_data_len;
     uint8_t ie_data[MAX_IE_DATA_LEN];
+    /* --- Enriched fingerprint fields (added at end for backward compat) --- */
+    char    ie_order[MAX_IE_ORDER_LEN]; /* IE tag sequence in frame-native order */
+    uint8_t vendor_ie_count;           /* total tag-221 IEs seen pre-filter */
 } stats_arg_t;
 
 typedef struct {

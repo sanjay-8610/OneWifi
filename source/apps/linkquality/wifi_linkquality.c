@@ -622,30 +622,64 @@ int exec_event_webconfig_event(wifi_app_t *apps, wifi_event_t *event)
  * parse_and_store_ies - Parse a raw 802.11 IE buffer and store a filtered,
  * deterministically ordered subset into dst.
  *
- * Only SSID (tag 0), Supported Rates (tag 1), and up to MAX_VENDOR_IES_FOR_FP
- * Vendor Specific IEs (tag 221) are retained. Vendor IEs with OUI 00:50:F2
- * type 1 (WPA) or type 4 (WPS) are dropped.
- * Output order is always: SSID → Supported Rates → Vendor IEs, regardless
- * of the order they appear in the frame, ensuring deterministic hashing.
+ * Collected IEs (full tag+len+body):
+ *   Tag   0  SSID
+ *   Tag   1  Supported Rates
+ *   Tag  45  HT Capabilities
+ *   Tag  48  RSN (WPA2/WPA3)
+ *   Tag 127  Extended Capabilities
+ *   Tag 191  VHT Capabilities
+ *   Tag 221  Vendor Specific (up to MAX_VENDOR_IES_FOR_FP; WPA/WPS filtered)
+ *   Tag 255  HE Capabilities (Extension ID 35)
  *
- * @src      Raw IE bytes from the frame body.
- * @src_len  Length of src in bytes.
- * @dst      Output buffer (ie_data field of stats_arg_t).
- * @dst_max  Capacity of dst (MAX_IE_DATA_LEN).
- * @return   Number of bytes written to dst.
+ * Output order is always canonical regardless of frame order:
+ *   SSID → Rates → HT Caps → VHT Caps → HE Caps → Ext Caps → RSN → Vendor IEs
+ *
+ * Additionally:
+ *   ie_order_out  — dash-separated tag sequence in frame-native order
+ *                   (tag 255 rendered as "255:EXT_ID")
+ *   vendor_count_out — total tag-221 count seen before filter
+ *
+ * @src              Raw IE bytes from the frame body.
+ * @src_len          Length of src in bytes.
+ * @dst              Output buffer (ie_data field of stats_arg_t).
+ * @dst_max          Capacity of dst (MAX_IE_DATA_LEN).
+ * @ie_order_out     Output buffer for IE order string (MAX_IE_ORDER_LEN bytes).
+ * @ie_order_max     Capacity of ie_order_out.
+ * @vendor_count_out Receives the raw vendor IE count (pre-filter).
+ * @return           Number of bytes written to dst.
  */
 #define MAX_VENDOR_IES_FOR_FP 4
 static uint16_t parse_and_store_ies(const uint8_t *src, uint16_t src_len,
-                                     uint8_t *dst, uint16_t dst_max)
+                                     uint8_t *dst, uint16_t dst_max,
+                                     char *ie_order_out, uint16_t ie_order_max,
+                                     uint8_t *vendor_count_out)
 {
-    uint8_t  ssid_buf[257]        = {0}; /* tag(1)+len(1)+up-to-255 */
-    uint16_t ssid_total           = 0;
-    uint8_t  rates_buf[257]       = {0};
-    uint16_t rates_total          = 0;
-    uint8_t  vendor_buf[MAX_IE_DATA_LEN];
-    uint16_t vendor_total         = 0;
-    int      vendor_count         = 0;
-    uint16_t offset               = 0;
+    /* --- Per-IE collection buffers --- */
+    uint8_t  ssid_buf[257]           = {0}; /* tag(1)+len(1)+up-to-255 */
+    uint16_t ssid_total              = 0;
+    uint8_t  rates_buf[257]          = {0};
+    uint16_t rates_total             = 0;
+    uint8_t  ht_buf[30]              = {0}; /* HT Caps: tag+len+26 bytes */
+    uint16_t ht_total                = 0;
+    uint8_t  vht_buf[16]             = {0}; /* VHT Caps: tag+len+12 bytes */
+    uint16_t vht_total               = 0;
+    uint8_t  he_buf[64]              = {0}; /* HE Caps: variable, max ~31 */
+    uint16_t he_total                = 0;
+    uint8_t  extcap_buf[16]          = {0}; /* Ext Caps: variable, typically ≤10 */
+    uint16_t extcap_total            = 0;
+    uint8_t  rsn_buf[64]             = {0}; /* RSN: variable, typically ≤42 */
+    uint16_t rsn_total               = 0;
+    uint8_t  vendor_buf[MAX_IE_DATA_LEN] = {0};
+    uint16_t vendor_total            = 0;
+    int      vendor_count_accepted   = 0;
+    int      vendor_count_raw        = 0;
+
+    /* --- IE order string accumulator --- */
+    char     order_buf[MAX_IE_ORDER_LEN] = {0};
+    int      order_pos               = 0;
+
+    uint16_t offset = 0;
 
     while (offset + 2 <= src_len) {
         uint8_t tag = src[offset];
@@ -655,6 +689,25 @@ static uint16_t parse_and_store_ies(const uint8_t *src, uint16_t src_len,
             break;
         }
 
+        /* --- Record this tag in the IE order string (frame-native order) --- */
+        {
+            char tok[16] = {0};
+            if (tag == 255 && len >= 1) {
+                /* Extension IE: render as "255:EXT_ID" */
+                snprintf(tok, sizeof(tok), "%s255:%u",
+                         order_pos > 0 ? "-" : "", src[offset + 2]);
+            } else {
+                snprintf(tok, sizeof(tok), "%s%u",
+                         order_pos > 0 ? "-" : "", tag);
+            }
+            int tok_len = (int)strlen(tok);
+            if (order_pos + tok_len < (int)ie_order_max - 1) {
+                memcpy(&order_buf[order_pos], tok, tok_len);
+                order_pos += tok_len;
+            }
+        }
+
+        /* --- Collect each supported IE into its dedicated buffer --- */
         if (tag == 0) { /* SSID */
             if (ssid_total == 0 && (2 + len) <= (uint16_t)sizeof(ssid_buf)) {
                 ssid_buf[0] = tag;
@@ -669,49 +722,115 @@ static uint16_t parse_and_store_ies(const uint8_t *src, uint16_t src_len,
                 memcpy(&rates_buf[2], &src[offset + 2], len);
                 rates_total = 2 + len;
             }
-        } else if (tag == 221 && vendor_count < MAX_VENDOR_IES_FOR_FP) { /* Vendor Specific */
-            /* Skip OUI 00:50:F2 type 1 (WPA) or type 4 (WPS) */
-            if (len >= 4) {
-                const uint8_t *oui = &src[offset + 2];
-                if (oui[0] == 0x00 && oui[1] == 0x50 && oui[2] == 0xF2 &&
-                    (oui[3] == 1 || oui[3] == 4)) {
-                    offset += 2 + len;
-                    continue;
-                }
+        } else if (tag == 45) { /* HT Capabilities */
+            if (ht_total == 0 && (2 + len) <= (uint16_t)sizeof(ht_buf)) {
+                ht_buf[0] = tag;
+                ht_buf[1] = len;
+                memcpy(&ht_buf[2], &src[offset + 2], len);
+                ht_total = 2 + len;
             }
-            if ((vendor_total + 2 + len) <= (uint16_t)sizeof(vendor_buf)) {
-                vendor_buf[vendor_total]     = tag;
-                vendor_buf[vendor_total + 1] = len;
-                memcpy(&vendor_buf[vendor_total + 2], &src[offset + 2], len);
-                vendor_total += 2 + len;
-                vendor_count++;
+        } else if (tag == 48) { /* RSN */
+            if (rsn_total == 0 && (2 + len) <= (uint16_t)sizeof(rsn_buf)) {
+                rsn_buf[0] = tag;
+                rsn_buf[1] = len;
+                memcpy(&rsn_buf[2], &src[offset + 2], len);
+                rsn_total = 2 + len;
+            }
+        } else if (tag == 127) { /* Extended Capabilities */
+            if (extcap_total == 0 && (2 + len) <= (uint16_t)sizeof(extcap_buf)) {
+                extcap_buf[0] = tag;
+                extcap_buf[1] = len;
+                memcpy(&extcap_buf[2], &src[offset + 2], len);
+                extcap_total = 2 + len;
+            }
+        } else if (tag == 191) { /* VHT Capabilities */
+            if (vht_total == 0 && (2 + len) <= (uint16_t)sizeof(vht_buf)) {
+                vht_buf[0] = tag;
+                vht_buf[1] = len;
+                memcpy(&vht_buf[2], &src[offset + 2], len);
+                vht_total = 2 + len;
+            }
+        } else if (tag == 255) { /* Element ID Extension — check for HE Caps (ext ID 35) */
+            if (he_total == 0 && len >= 1 && src[offset + 2] == 35 &&
+                (2 + len) <= (uint16_t)sizeof(he_buf)) {
+                he_buf[0] = tag;
+                he_buf[1] = len;
+                memcpy(&he_buf[2], &src[offset + 2], len);
+                he_total = 2 + len;
+            }
+        } else if (tag == 221) { /* Vendor Specific */
+            vendor_count_raw++;
+            if (vendor_count_accepted < MAX_VENDOR_IES_FOR_FP) {
+                /* Skip OUI 00:50:F2 type 1 (WPA) or type 4 (WPS) */
+                if (len >= 4) {
+                    const uint8_t *oui = &src[offset + 2];
+                    if (oui[0] == 0x00 && oui[1] == 0x50 && oui[2] == 0xF2 &&
+                        (oui[3] == 1 || oui[3] == 4)) {
+                        offset += 2 + len;
+                        continue;
+                    }
+                }
+                if ((vendor_total + 2 + len) <= (uint16_t)sizeof(vendor_buf)) {
+                    vendor_buf[vendor_total]     = tag;
+                    vendor_buf[vendor_total + 1] = len;
+                    memcpy(&vendor_buf[vendor_total + 2], &src[offset + 2], len);
+                    vendor_total += 2 + len;
+                    vendor_count_accepted++;
+                }
             }
         }
         offset += 2 + len;
     }
 
-    /* Write in deterministic order: SSID → Supported Rates → Vendor IEs */
-    uint16_t written = 0;
-    if (ssid_total > 0 && (written + ssid_total) <= dst_max) {
-        memcpy(&dst[written], ssid_buf, ssid_total);
-        written += ssid_total;
-    }
-    if (rates_total > 0 && (written + rates_total) <= dst_max) {
-        memcpy(&dst[written], rates_buf, rates_total);
-        written += rates_total;
-    }
-    if (vendor_total > 0 && (written + vendor_total) <= dst_max) {
-        memcpy(&dst[written], vendor_buf, vendor_total);
-        written += vendor_total;
+    /* Copy IE order string to output */
+    if (ie_order_out && ie_order_max > 0) {
+        strncpy(ie_order_out, order_buf, ie_order_max - 1);
+        ie_order_out[ie_order_max - 1] = '\0';
     }
 
-    /* ----- Debug: summarise which IEs were stored ----- */
+    /* Copy raw vendor IE count to output */
+    if (vendor_count_out) {
+        *vendor_count_out = (uint8_t)(vendor_count_raw <= 255 ? vendor_count_raw : 255);
+    }
+
+    /*
+     * Write in deterministic canonical order:
+     *   SSID → Rates → HT Caps → VHT Caps → HE Caps → Ext Caps → RSN → Vendor IEs
+     * This order is fixed regardless of how IEs appeared in the frame.
+     */
+    uint16_t written = 0;
+#define APPEND_IE_BUF(buf, total) \
+    do { \
+        if ((total) > 0 && (written + (total)) <= dst_max) { \
+            memcpy(&dst[written], (buf), (total)); \
+            written += (total); \
+        } \
+    } while (0)
+
+    APPEND_IE_BUF(ssid_buf,   ssid_total);
+    APPEND_IE_BUF(rates_buf,  rates_total);
+    APPEND_IE_BUF(ht_buf,     ht_total);
+    APPEND_IE_BUF(vht_buf,    vht_total);
+    APPEND_IE_BUF(he_buf,     he_total);
+    APPEND_IE_BUF(extcap_buf, extcap_total);
+    APPEND_IE_BUF(rsn_buf,    rsn_total);
+    APPEND_IE_BUF(vendor_buf, vendor_total);
+#undef APPEND_IE_BUF
+
+    /* ----- Debug: summary ----- */
     wifi_util_dbg_print(WIFI_APPS,
-        "parse_and_store_ies: copied IEs: SSID=%s(%u B) Rates=%s(%u B) Vendor=%d IE(s)(%u B) total=%u B\n",
-        ssid_total  ? "YES" : "NO",  ssid_total,
-        rates_total ? "YES" : "NO",  rates_total,
-        vendor_count, vendor_total,
-        written);
+        "parse_and_store_ies: SSID=%s(%uB) Rates=%s(%uB) HT=%s(%uB) VHT=%s(%uB)"
+        " HE=%s(%uB) ExtCap=%s(%uB) RSN=%s(%uB) Vendor=%d/%d(%uB)"
+        " IE_Order=[%s] total=%uB\n",
+        ssid_total   ? "YES" : "NO", ssid_total,
+        rates_total  ? "YES" : "NO", rates_total,
+        ht_total     ? "YES" : "NO", ht_total,
+        vht_total    ? "YES" : "NO", vht_total,
+        he_total     ? "YES" : "NO", he_total,
+        extcap_total ? "YES" : "NO", extcap_total,
+        rsn_total    ? "YES" : "NO", rsn_total,
+        vendor_count_accepted, vendor_count_raw, vendor_total,
+        order_buf, written);
 
     /* ----- Debug: human-readable dump of every stored IE ----- */
     {
@@ -722,61 +841,75 @@ static uint16_t parse_and_store_ies(const uint8_t *src, uint16_t src_len,
             "parse_and_store_ies: IE dump (%u bytes total)\n"
             "------------------------------------------------------------------\n"
             "  #   ID   LEN   CONTENT\n"
-            "  ----+----+-----+-------------------------------------------------\n");
+            "  ----+----+-----+-------------------------------------------------\n",
+            written);
         while (off + 2 <= written) {
             uint8_t  id  = dst[off];
-            uint8_t  len = dst[off + 1];
-            if (off + 2 + len > written)
+            uint8_t  ilen = dst[off + 1];
+            if (off + 2 + ilen > written)
                 break;
             ++ie_num;
             if (id == 0) {
-                /* SSID — printable UTF-8 string */
                 char ssid_str[256] = {0};
-                uint8_t slen = (len < 255) ? len : 254;
+                uint8_t slen = (ilen < 255) ? ilen : 254;
                 memcpy(ssid_str, &dst[off + 2], slen);
                 ssid_str[slen] = '\0';
                 wifi_util_dbg_print(WIFI_APPS,
-                    "  %-3d  %-3u  %-4u  SSID=\"%s\"\n",
-                    ie_num, id, len, ssid_str);
+                    "  %-3d  %-3u  %-4u  SSID=\"%s\"\n", ie_num, id, ilen, ssid_str);
             } else if (id == 1) {
-                /* Supported Rates — each byte encodes a rate */
                 char rbuf[256] = {0};
                 int  rpos = 0;
-                for (uint8_t r = 0; r < len && rpos < (int)sizeof(rbuf) - 8; r++) {
+                for (uint8_t r = 0; r < ilen && rpos < (int)sizeof(rbuf) - 8; r++) {
                     bool basic = (dst[off + 2 + r] & 0x80) != 0;
                     double mbps = (dst[off + 2 + r] & 0x7F) * 0.5;
                     rpos += snprintf(rbuf + rpos, sizeof(rbuf) - rpos,
                                      "%.1f%s%s", mbps,
                                      basic ? "*" : "",
-                                     r + 1 < len ? " " : "");
+                                     r + 1 < ilen ? " " : "");
                 }
                 wifi_util_dbg_print(WIFI_APPS,
-                    "  %-3d  %-3u  %-4u  SupportedRates=[%s]\n",
-                    ie_num, id, len, rbuf);
+                    "  %-3d  %-3u  %-4u  SupportedRates=[%s]\n", ie_num, id, ilen, rbuf);
+            } else if (id == 45) {
+                wifi_util_dbg_print(WIFI_APPS,
+                    "  %-3d  %-3u  %-4u  HTCapabilities htcap_info=0x%02x%02x\n",
+                    ie_num, id, ilen,
+                    ilen >= 2 ? dst[off + 3] : 0,
+                    ilen >= 1 ? dst[off + 2] : 0);
+            } else if (id == 48) {
+                wifi_util_dbg_print(WIFI_APPS,
+                    "  %-3d  %-3u  %-4u  RSN\n", ie_num, id, ilen);
+            } else if (id == 127) {
+                wifi_util_dbg_print(WIFI_APPS,
+                    "  %-3d  %-3u  %-4u  ExtendedCapabilities\n", ie_num, id, ilen);
+            } else if (id == 191) {
+                wifi_util_dbg_print(WIFI_APPS,
+                    "  %-3d  %-3u  %-4u  VHTCapabilities\n", ie_num, id, ilen);
+            } else if (id == 255) {
+                uint8_t ext_id = (ilen >= 1) ? dst[off + 2] : 0;
+                wifi_util_dbg_print(WIFI_APPS,
+                    "  %-3d  %-3u  %-4u  ExtensionIE ext_id=%u%s\n",
+                    ie_num, id, ilen, ext_id,
+                    ext_id == 35 ? " (HE Capabilities)" : "");
             } else if (id == 221) {
-                /* Vendor Specific — first 3 B = OUI, 4th = type */
-                if (len >= 4) {
+                if (ilen >= 4) {
                     const uint8_t *d = &dst[off + 2];
-                    char hbuf[256] = {0};
+                    char hbuf[128] = {0};
                     int  hpos = 0;
-                    for (uint8_t b = 4; b < len && hpos < (int)sizeof(hbuf) - 4; b++) {
-                        hpos += snprintf(hbuf + hpos, sizeof(hbuf) - hpos,
-                                         "%02x ", d[b]);
+                    for (uint8_t b = 4; b < ilen && hpos < (int)sizeof(hbuf) - 4; b++) {
+                        hpos += snprintf(hbuf + hpos, sizeof(hbuf) - hpos, "%02x ", d[b]);
                     }
                     wifi_util_dbg_print(WIFI_APPS,
                         "  %-3d  %-3u  %-4u  VendorSpecific OUI=%02x:%02x:%02x type=0x%02x data=[%s]\n",
-                        ie_num, id, len, d[0], d[1], d[2], d[3], hbuf);
+                        ie_num, id, ilen, d[0], d[1], d[2], d[3], hbuf);
                 } else {
                     wifi_util_dbg_print(WIFI_APPS,
-                        "  %-3d  %-3u  %-4u  VendorSpecific (short len)\n",
-                        ie_num, id, len);
+                        "  %-3d  %-3u  %-4u  VendorSpecific (short len)\n", ie_num, id, ilen);
                 }
             } else {
                 wifi_util_dbg_print(WIFI_APPS,
-                    "  %-3d  %-3u  %-4u  (raw)\n",
-                    ie_num, id, len);
+                    "  %-3d  %-3u  %-4u  (raw)\n", ie_num, id, ilen);
             }
-            off += 2 + len;
+            off += 2 + ilen;
         }
         wifi_util_dbg_print(WIFI_APPS,
             "------------------------------------------------------------------\n");
@@ -891,10 +1024,13 @@ int link_quality_probe_req_event(wifi_app_t *app, void *arg)
         if (msg->frame.len > ie_offset) {
             affinity_arg->ie_data_len = parse_and_store_ies(
                 &msg->data[ie_offset], (uint16_t)(msg->frame.len - ie_offset),
-                affinity_arg->ie_data, MAX_IE_DATA_LEN);
+                affinity_arg->ie_data, MAX_IE_DATA_LEN,
+                affinity_arg->ie_order, MAX_IE_ORDER_LEN,
+                &affinity_arg->vendor_ie_count);
             wifi_util_dbg_print(WIFI_APPS,
-                "%s:%d Parsed %u bytes of IE data for PROBE_REQ MAC=%s\n",
-                __func__, __LINE__, affinity_arg->ie_data_len, affinity_arg->mac_str);
+                "%s:%d Parsed %u bytes of IE data for PROBE_REQ MAC=%s ie_order=[%s] vendor_raw=%u\n",
+                __func__, __LINE__, affinity_arg->ie_data_len, affinity_arg->mac_str,
+                affinity_arg->ie_order, affinity_arg->vendor_ie_count);
         }
     }
 
@@ -1089,10 +1225,13 @@ int link_quality_apps_assoc_event(wifi_app_t *app, bool req,int sub_event,void *
                 affinity_arg->ie_data_len = parse_and_store_ies(
                     &msg->data[ie_offset],
                     (uint16_t)(msg->frame.len - ie_offset),
-                    affinity_arg->ie_data, MAX_IE_DATA_LEN);
+                    affinity_arg->ie_data, MAX_IE_DATA_LEN,
+                    affinity_arg->ie_order, MAX_IE_ORDER_LEN,
+                    &affinity_arg->vendor_ie_count);
                 wifi_util_dbg_print(WIFI_APPS,
-                    "%s:%d Parsed %u bytes of IE data for ASSOC_REQ MAC=%s\n",
-                    __func__, __LINE__, affinity_arg->ie_data_len, affinity_arg->mac_str);
+                    "%s:%d Parsed %u bytes of IE data for ASSOC_REQ MAC=%s ie_order=[%s] vendor_raw=%u\n",
+                    __func__, __LINE__, affinity_arg->ie_data_len, affinity_arg->mac_str,
+                    affinity_arg->ie_order, affinity_arg->vendor_ie_count);
             }
         }
 
