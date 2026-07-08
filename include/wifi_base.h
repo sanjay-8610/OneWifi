@@ -582,6 +582,9 @@ typedef struct {
     char dhcp_hostname[64];      /* Option 12 — parsed on DISCOVER/REQUEST */
     char dhcp_vendor_class[128]; /* Option 60 — parsed on DISCOVER/REQUEST */
     char dhcp_param_list[128];   /* Option 55 — parsed on DISCOVER/REQUEST */
+    int  dhcp_version;           /* 4 = DHCPv4, 6 = DHCPv6; 0 = unset */
+    char dhcp_duid[260];         /* DHCPv6 Client Identifier (Option 1) — hex-encoded DUID;
+                                  * max raw DUID = 128 B per RFC 8415 -> 256 hex chars + NUL */
     uint8_t frame_type;
     int rssi;
     uint16_t seq_number;
