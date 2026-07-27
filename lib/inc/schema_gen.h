@@ -2211,8 +2211,8 @@
     COLUMN(tcm_secure_5g_rfc) \
     COLUMN(tcm_secure_6g_rfc) \
     COLUMN(wpa3_compatibility_enable) \
-    COLUMN(xfi_tel_enable_rfc)
-    COLUMN(multiap_rfc) \
+    COLUMN(xfi_tel_enable_rfc) \
+    COLUMN(multiap_rfc)
 
 #define SCHEMA__Wifi_MacFilter_Config "Wifi_MacFilter_Config"
 #define SCHEMA_COLUMN__Wifi_MacFilter_Config(COLUMN) \
