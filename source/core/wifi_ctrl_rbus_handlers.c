@@ -27,6 +27,8 @@
 #include "wifi_monitor.h"
 #include "wifi_webconfig.h"
 #include "run_qmgr.h"
+#include "lq_ipc_sender.h"
+#include "wifi_linkquality_libs.h"
 #include "wifi_stubs.h"
 #include "lq_ipc_sender.h"
 #include "wifi_linkquality_libs.h"
@@ -441,6 +443,28 @@ bus_error_t set_endpoint_enable(char *name, raw_data_t *p_data, bus_user_data_t 
     return rc;
 
 }
+
+bus_error_t set_linkq_gw(char *name, raw_data_t *p_data, bus_user_data_t *user_data)
+{
+    (void)user_data;
+    bus_error_t rc = bus_error_success;
+    wifi_ctrl_t *ctrl = (wifi_ctrl_t *)get_wifictrl_obj();
+    if (ctrl == NULL) {
+        wifi_util_error_print(WIFI_CTRL, "%s:%d NULL pointers\n", __func__, __LINE__);
+        return bus_error_general;
+    }
+
+    if (p_data->data_type != bus_data_type_boolean) {
+        wifi_util_error_print(WIFI_CTRL, "%s:%d Invalid data input\n", __func__, __LINE__);
+        return bus_error_general;
+    }
+    wifi_util_info_print(WIFI_CTRL, "%s:%d value=%d\n",__func__,__LINE__,p_data->raw_data.b);
+    if (p_data->raw_data.b) {
+        apps_mgr_link_quality_event(&ctrl->apps_mgr, wifi_event_type_command, wifi_event_type_link_quality_rfc, NULL, 0);
+    }
+    return rc;
+}
+
 
 int stats_bus_publish(wifi_ctrl_t *ctrl, void *stats_data)
 {

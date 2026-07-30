@@ -32,10 +32,9 @@ extern "C" {
 #include "wifi_linkquality_libs.h"
 
 #define MAX_STR_LEN_LQ 128
+#define MAX_BUFF_LEN_lq 1048
 #define IGNITE_SCORE_LOG_INTERVAL_MS 900000 // 15 mins
 #define IGNITE_INITIAL_PUBLISH_ITERATIONS 5
-
-
 #define MAC_ADDRESS_LEN 6
 typedef struct {
     double last_score;

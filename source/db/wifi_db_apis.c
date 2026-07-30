@@ -279,6 +279,9 @@ void callback_Wifi_Rfc_Config(ovsdb_update_monitor_t *mon, struct schema_Wifi_Rf
         rfc_param->wei_rfc_mask = new_rec->wei_rfc_mask;
         rfc_param->xfi_tel_enable_rfc = new_rec->xfi_tel_enable_rfc;
         rfc_param->multiap_rfc = new_rec->multiap_rfc;
+        rfc_param->radio_2g_observed_max_snr = new_rec->radio_2g_observed_max_snr;
+        rfc_param->radio_5g_observed_max_snr = new_rec->radio_5g_observed_max_snr;
+        rfc_param->radio_6g_observed_max_snr = new_rec->radio_6g_observed_max_snr;
 
         wifi_util_dbg_print(WIFI_DB,
             "%s:%d wifipasspoint_rfc=%d wifiinterworking_rfc=%d radiusgreylist_rfc=%d "

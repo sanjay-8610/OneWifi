@@ -587,6 +587,18 @@ typedef struct {
     unsigned int num_opclass;
     nasta_opclass_entry_t opclass_list[MAX_NASTA_OPCLASS_ENTRIES];
 } nasta_query_t;
+#define MAX_IE_DATA_LEN 512
+#define MAX_IE_ORDER_LEN 128   /* "0-1-50-45-48-127-221-191-255:35\0" */
+
+typedef enum {
+    LQ_FRAME_TYPE_NONE       = 0,
+    LQ_FRAME_TYPE_PROBE_REQ  = 1,
+    LQ_FRAME_TYPE_AUTH_SEQ1  = 2,
+    LQ_FRAME_TYPE_AUTH       = 3,
+    LQ_FRAME_TYPE_ASSOC_REQ  = 4,
+    LQ_FRAME_TYPE_ASSOC_RES  = 5,
+    LQ_FRAME_UNKNOWN         = 0xFF
+} lq_frame_type_t;
 
 typedef struct {
     mac_addr_str_t mac_str;
@@ -602,9 +614,21 @@ typedef struct {
     unsigned int status_code;
     int dhcp_event;
     int dhcp_msg_type;
-    char dhcp_hostname[256];
-    char dhcp_vendor_class[256];
-    char dhcp_param_list[512];
+    char dhcp_hostname[64];      /* Option 12 — parsed on DISCOVER/REQUEST */
+    char dhcp_vendor_class[128]; /* Option 60 — parsed on DISCOVER/REQUEST */
+    char dhcp_param_list[128];   /* Option 55 — parsed on DISCOVER/REQUEST */
+    int  dhcp_version;           /* 4 = DHCPv4, 6 = DHCPv6; 0 = unset */
+    char dhcp_duid[260];         /* DHCPv6 Client Identifier (Option 1) — hex-encoded DUID;
+                                  * max raw DUID = 128 B per RFC 8415 -> 256 hex chars + NUL */
+    uint8_t frame_type;
+    int rssi;
+    uint16_t seq_number;
+    struct timespec frame_timestamp;
+    uint16_t ie_data_len;
+    uint8_t ie_data[MAX_IE_DATA_LEN];
+    /* --- Enriched fingerprint fields (added at end for backward compat) --- */
+    char    ie_order[MAX_IE_ORDER_LEN]; /* IE tag sequence in frame-native order */
+    uint8_t vendor_ie_count;           /* total tag-221 IEs seen pre-filter */
 } stats_arg_t;
 
 typedef struct {
@@ -655,6 +679,9 @@ typedef struct {
     int  wei_rfc_mask;
     bool xfi_tel_enable_rfc;
     bool multiap_rfc;
+    int radio_2g_observed_max_snr;
+    int radio_5g_observed_max_snr;
+    int radio_6g_observed_max_snr;
 } wifi_rfc_dml_parameters_t;
 
 typedef struct {
