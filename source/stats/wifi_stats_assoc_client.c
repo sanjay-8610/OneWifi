@@ -299,6 +299,7 @@ int execute_assoc_client_stats_api(wifi_mon_collector_element_t *c_elem, wifi_mo
             memset(&link_data[i], 0, sizeof(linkquality_data_t));
             link_data[i].size = num_devs;
             to_sta_key(dev_array[i].cli_MACAddress, link_data[i].stats.mac_str);
+            to_mac_str(bss_param->bssid, link_data[i].stats.ap_mac_str);
             copy_assocstats_dev_stats(&dev_array[i], &link_data[i].stats.dev);
             link_data[i].stats.vap_index = args->vap_index;
             link_data[i].stats.radio_index = getRadioIndexFromAp(args->vap_index);
@@ -318,6 +319,7 @@ int execute_assoc_client_stats_api(wifi_mon_collector_element_t *c_elem, wifi_mo
       
 #endif
             get_radio_channel_utilization(link_data[i].stats.radio_index,&link_data[i].stats.channel_utilization);
+/*
             wifi_util_dbg_print(WIFI_MON,
                     "cli_SNR:%d cli_PacketsSent:%lu cli_ErrorsSent:%lu cli_LastDataDownlinkRate:%d "
                     "cli_MaxDownlinkRate=%d vap_index=%d radio_index=%d channel_utilization=%d "
@@ -326,7 +328,17 @@ int execute_assoc_client_stats_api(wifi_mon_collector_element_t *c_elem, wifi_mo
                     dev_array[i].cli_LastDataDownlinkRate, dev_array[i].cli_MaxDownlinkRate,
                     link_data[i].stats.vap_index, link_data[i].stats.radio_index,
                     link_data[i].stats.channel_utilization,
-                    link_data[i].stats.is_be);
+                    link_data[i].stats.is_be);*/
+
+            wifi_util_dbg_print(WIFI_MON,
+                    "%s:%d cli_SNR:%d cli_PacketsSent:%lu cli_ErrorsSent:%lu cli_LastDataDownlinkRate:%d "
+                    "cli_MaxDownlinkRate=%d vap_index=%d radio_index=%d channel_utilization=%d "
+                    "radio_is_be=%d ap_mac_str=[%s]\n",
+                    __func__, __LINE__, dev_array[i].cli_SNR, dev_array[i].cli_PacketsSent, dev_array[i].cli_ErrorsSent,
+                    dev_array[i].cli_LastDataDownlinkRate, dev_array[i].cli_MaxDownlinkRate,
+                    link_data[i].stats.vap_index, link_data[i].stats.radio_index,
+                    link_data[i].stats.channel_utilization,
+                    link_data[i].stats.is_be, link_data[i].stats.ap_mac_str);
         }
     }
     events_update_clientdiagdata(num_devs, args->vap_index, dev_array);
@@ -445,9 +457,6 @@ int execute_assoc_client_stats_api(wifi_mon_collector_element_t *c_elem, wifi_mo
 
             // Update link_data with the sta times for periodic caffinity stats update
             if (link_data && i < num_devs && ((link_quality_measurement) || (rf_down_mesh_sta))) {
-                unsigned int eap_m1 = 0;
-                unsigned int eap_m2 = 0;
-                unsigned int eap_m3 = 0;
                 unsigned int eap_failures = 0;
 
                 link_data[i].stats.total_connected_time = sta->total_connected_time;
@@ -457,17 +466,18 @@ int execute_assoc_client_stats_api(wifi_mon_collector_element_t *c_elem, wifi_mo
                 if (interop_sta_map != NULL) {
                     interop_sta = (interop_data_t *)hash_map_get(interop_sta_map, sta_key);
                     if (interop_sta != NULL) {
-                        eap_m1 = interop_sta->eapol_status_type_counts[0] + interop_sta->eapol_status_type_counts[1];
-                        eap_m2 = interop_sta->eapol_status_type_counts[2] + interop_sta->eapol_status_type_counts[3];
-                        eap_m3 = interop_sta->eapol_status_type_counts[4] + interop_sta->eapol_status_type_counts[5];
+                        eap_failures = interop_sta->eapol_status_type_counts[0] +
+                            interop_sta->eapol_status_type_counts[1] +
+                            interop_sta->eapol_status_type_counts[2] +
+                            interop_sta->eapol_status_type_counts[3] +
+                            interop_sta->eapol_status_type_counts[4] +
+                            interop_sta->eapol_status_type_counts[5];
                     }
                 }
 
-                eap_failures = eap_m1 + eap_m2 + eap_m3;
-
-                link_data[i].stats.eapol_m1_count = eap_m1;
-                link_data[i].stats.eapol_m2_count = eap_m2;
-                link_data[i].stats.eapol_m3_count = eap_m3;
+                link_data[i].stats.eapol_m1_count = sta->eapol_m1_count;
+                link_data[i].stats.eapol_m2_count = sta->eapol_m2_count;
+                link_data[i].stats.eapol_m3_count = sta->eapol_m3_count;
                 link_data[i].stats.eapol_m4_count = sta->eapol_m4_count;
                 link_data[i].stats.eapol_failures = eap_failures;
                 link_data[i].stats.eapol_attempts = eap_failures + sta->eapol_m4_count;
