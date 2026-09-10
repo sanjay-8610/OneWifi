@@ -337,15 +337,18 @@ typedef struct {
     bool enabled;
 } public_vaps_data_t;
 
-typedef enum
-{
-    WEI_RFC_NONE  = 0x00,  /* Main WEI RFC disabled                  */
-    WEI_RFC_MAIN  = 0x01,  /* Main WEI RFC enabled                   */
-    WEI_RFC_LQ    = 0x02,  /* Link Quality pillar enabled            */
-    WEI_RFC_GC    = 0x04,  /* Getting Connected pillar enabled       */
-    WEI_RFC_SC    = 0x08,  /* Staying Connected pillar enabled       */
-    WEI_RFC_ALL   = (WEI_RFC_MAIN | WEI_RFC_LQ | WEI_RFC_GC | WEI_RFC_SC)
-} wei_rfc_mask_t;
+/* Delta pushed through the ctrl queue by a WEI rbus Set (field_id indexes
+ * the descriptor table in wifi_ctrl_rbus_handlers.c) so every mutation of
+ * wei_rfc_dml_parameters_t is applied serialized on the ctrl thread.
+ * field_id == -1 means "already applied to the DB-mirror cache by an
+ * external write (e.g. direct OVSDB update); just recompute + notify". */
+typedef struct {
+    int      field_id;
+    bool     bval;
+    uint32_t uval;
+    char     sval[256 + 1];
+} wei_rfc_field_update_t;
+
 void process_mgmt_ctrl_frame_event(frame_data_t *msg, uint32_t msg_length);
 wifi_db_t *get_wifidb_obj();
 wifi_ctrl_t *get_wifictrl_obj();
