@@ -121,10 +121,6 @@ void qmgr_invoke_batch(const report_batch_t *batch);
 void qmgr_invoke_score(const char *str, double score,double threshold);
 void qmgr_invoke_max_snr_callback(int radio_index,int max_snr);
 
-int run_web_server();
-int stop_web_server();
-
-
 int add_stats_metrics(stats_arg_t *stats);
 int remove_link_stats(stats_arg_t *stats);
 int start_link_metrics();

@@ -34,6 +34,7 @@ extern "C" {
 #include "wifi_util.h"
 #include "wifi_webconfig.h"
 #include "wifi_apps_mgr.h"
+#include "wifi_ctrl_wei_rfc.h"
 
 #define WIFI_WEBCONFIG_PRIVATESSID         1
 #define WIFI_WEBCONFIG_HOMESSID            2
@@ -264,7 +265,6 @@ typedef struct wifi_ctrl {
     bool                wifi_sta_5g_status_subscribed;
     bool                eth_bh_status_subscribed;
     bool                mesh_keep_out_chans_subscribed;
-    bool                wei_events_subscribed;
     wifiapi_t           wifiapi;
     wifi_rfc_dml_parameters_t    rfc_params;
     unsigned int        sta_tree_instance_num;
@@ -423,6 +423,16 @@ wifi_vap_info_t* get_wifidb_vap_parameters(uint8_t vapIndex);
 wifi_rfc_dml_parameters_t* get_wifi_db_rfc_parameters(void);
 ignite_config_t* get_ignite_config_by_name(char *name);
 wifi_rfc_dml_parameters_t* get_ctrl_rfc_parameters(void);
+wei_rfc_dml_parameters_t* get_wifi_db_wei_rfc_parameters(void);
+wei_rfc_dml_parameters_t* get_ctrl_wei_rfc_parameters(void);
+int wifidb_get_wei_rfc_config(wei_rfc_dml_parameters_t *rfc_info);
+int wifidb_update_wei_rfc_config(wei_rfc_dml_parameters_t *rfc_param);
+void wifidb_init_wei_rfc_config_default(wei_rfc_dml_parameters_t *config);
+/* Implemented in wifi_ctrl_rbus_handlers.c: applies a field delta (if any),
+ * derives Wifi_Rfc_Config.wei_rfc_mask and publishes change-notification
+ * bus events. Invoked from the ctrl-queue dispatcher in
+ * wifi_ctrl_queue_handlers.c on wifi_event_type_wei_rfc_config. */
+void process_wei_rfc_config_update(wei_rfc_field_update_t *upd);
 rdk_wifi_radio_t* find_radio_config_by_index(uint8_t r_index);
 int get_device_config_list(char *d_list, int size, char *str);
 int get_cm_mac_address(char *mac);

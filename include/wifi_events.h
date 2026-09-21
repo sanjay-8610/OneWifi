@@ -181,9 +181,8 @@ typedef enum {
     wifi_event_type_rsn_override_rfc,
     wifi_event_type_sta_client_info,
     wifi_event_type_start_sta_channel_scan,
-    wifi_event_type_multiap_rfc,
     wifi_event_type_xfi_tel_enable_rfc,
-    wifi_event_type_wei_rfc_mask,
+    wifi_event_type_multiap_rfc,
     wifi_event_command_max,
 
     wifi_event_monitor_diagnostics = wifi_event_type_base

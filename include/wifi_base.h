@@ -602,6 +602,8 @@ typedef struct {
     bool tcm_secure_6g_rfc;
     bool wpa3_compatibility_enable;
     bool memwraptool_app_rfc;
+    /* In-memory only (not an OVSDB column): derived exclusively from
+     * Wifi_Wei_Rfc_Config by wei_compute_rfc_mask(), never persisted itself. */
     bool wei_rfc_mask;
     bool xfi_tel_enable_rfc;
     bool multiap_rfc;

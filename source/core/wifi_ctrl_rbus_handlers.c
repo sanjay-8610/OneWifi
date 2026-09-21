@@ -2935,19 +2935,6 @@ void bus_subscribe_events(wifi_ctrl_t *ctrl)
         }
     }
 
-    if (ctrl->wei_events_subscribed == false) {
-        int ret1 = -1;
-        ret1 = bus_desc->bus_event_subs_fn(&ctrl->handle, WEI_RFC_MASK, wei_rfc_mask_handler, NULL,0);
-        if (ret1 == 0 )  {    
-	    ctrl->wei_events_subscribed = true;
-            wifi_util_dbg_print(WIFI_CTRL, "%s:%d wei event subscribe success\n",
-                __FUNCTION__, __LINE__);
-        } else {
-            wifi_util_dbg_print(WIFI_CTRL, "%s:%d wei event subscribe unsuccess\n",
-                __FUNCTION__, __LINE__);
-	}
-    }
-
 #if defined(RDKB_EXTENDER_ENABLED) || defined(WAN_FAILOVER_SUPPORTED)
     if (ctrl->device_mode_subscribed == false) {
         if (bus_desc->bus_event_subs_fn(&ctrl->handle, WIFI_DEVICE_MODE, deviceModeHandler, NULL,

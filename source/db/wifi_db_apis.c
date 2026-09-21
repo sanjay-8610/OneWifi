@@ -279,7 +279,6 @@ void callback_Wifi_Rfc_Config(ovsdb_update_monitor_t *mon, struct schema_Wifi_Rf
         rfc_param->tcm_secure_5g_rfc = new_rec->tcm_secure_5g_rfc;
         rfc_param->tcm_secure_6g_rfc = new_rec->tcm_secure_6g_rfc;
         rfc_param->wpa3_compatibility_enable = new_rec->wpa3_compatibility_enable;
-        rfc_param->wei_rfc_mask = new_rec->wei_rfc_mask;
         rfc_param->xfi_tel_enable_rfc = new_rec->xfi_tel_enable_rfc;
         rfc_param->multiap_rfc = new_rec->multiap_rfc;
 
@@ -291,7 +290,7 @@ void callback_Wifi_Rfc_Config(ovsdb_update_monitor_t *mon, struct schema_Wifi_Rf
             "hotspot_secure_5g_last_enabled=%d hotspot_secure_6g_last_enabled=%d "
             "wifi_offchannelscan_app_rfc=%d offchannelscan=%d rfc_id=%s "
             "MemwrapTool=%d levl_enabled_rfc=%d tcm_enabled_rfc=%d "
-            "wpa3_compatibility_enable=%d we_rfc_mask=%d xfi_tel_enable_rfc=%d "
+            "wpa3_compatibility_enable=%d xfi_tel_enable_rfc=%d "
             "multiap_rfc=%d\r\n",
             __func__, __LINE__, rfc_param->wifipasspoint_rfc, rfc_param->wifiinterworking_rfc,
             rfc_param->radiusgreylist_rfc, rfc_param->dfsatbootup_rfc, rfc_param->dfs_rfc,
@@ -302,7 +301,7 @@ void callback_Wifi_Rfc_Config(ovsdb_update_monitor_t *mon, struct schema_Wifi_Rf
             rfc_param->wifi_offchannelscan_app_rfc, rfc_param->wifi_offchannelscan_sm_rfc,
             rfc_param->rfc_id, rfc_param->memwraptool_app_rfc, rfc_param->levl_enabled_rfc,
             rfc_param->tcm_enabled_rfc, rfc_param->wpa3_compatibility_enable,
-            rfc_param->wei_rfc_mask, rfc_param->xfi_tel_enable_rfc, rfc_param->multiap_rfc);
+            rfc_param->xfi_tel_enable_rfc, rfc_param->multiap_rfc);
         pthread_mutex_unlock(&g_wifidb->data_cache_lock);
     }
 }
@@ -5007,7 +5006,6 @@ void wifidb_init_rfc_config_default(wifi_rfc_dml_parameters_t *config)
     rfc_config.wpa3_compatibility_enable = false;
     rfc_config.xfi_tel_enable_rfc = false;
     rfc_config.multiap_rfc = false;
-    rfc_config.wei_rfc_mask = 0;
     pthread_mutex_lock(&g_wifidb->data_cache_lock);
     memcpy(config,&rfc_config,sizeof(wifi_rfc_dml_parameters_t));
     pthread_mutex_unlock(&g_wifidb->data_cache_lock);
