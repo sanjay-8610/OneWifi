@@ -4867,15 +4867,6 @@ void bus_register_handlers(wifi_ctrl_t *ctrl)
                                 { WIFI_CSA_BEACON_FRAME_RECEIVED, bus_element_type_event,
                                     { NULL, NULL, NULL, NULL, eventSubHandler, NULL}, high_speed, ZERO_TABLE,
                                     { bus_data_type_bytes, false, 0, 0, 0, NULL } },
-                                { WIFI_LINK_QUALITY_DATA, bus_element_type_method,
-                                    { wifi_get_link_quality_data, NULL, NULL, NULL, NULL, NULL }, slow_speed, ZERO_TABLE,
-                                    { bus_data_type_string, false, 0, 0, 0, NULL } },
-                                { WIFI_LINK_QUALITY_FLAGS, bus_element_type_method,
-                                    { wifi_get_link_quality_flags, wifi_set_link_quality_flags, NULL, NULL, NULL, NULL }, slow_speed, ZERO_TABLE,
-                                    {bus_data_type_uint32, false, 0, 0, 0, NULL } },
-                                { WIFI_IGNITE_STATUS, bus_element_type_event,
-                                    { NULL, NULL, NULL, NULL, NULL, NULL }, slow_speed, ZERO_TABLE,
-                                    { bus_data_type_string, false, 0, 0, 0, NULL } },
     };
 
     rc = get_bus_descriptor()->bus_open_fn(&ctrl->handle, component_name);
